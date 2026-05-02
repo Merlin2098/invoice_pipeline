@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from src.pipeline.llm_ollama import contract_field_names, extract_structured_data
+from src.pipeline.llm_ollama import contract_field_names, extract_structured_data, validate_ollama_model
 from src.utils.logging import configure_logging
 
 BRONZE_DIR = Path("data/bronze")
@@ -78,8 +78,11 @@ def run_silver_pipeline(
     bronze_dir: Path = BRONZE_DIR,
     silver_dir: Path = SILVER_DIR,
     max_retries: int = MAX_RETRIES,
+    validate_model: bool = True,
 ) -> None:
     silver_dir.mkdir(parents=True, exist_ok=True)
+    if validate_model:
+        validate_ollama_model()
 
     for bronze_record in load_bronze_text(bronze_dir):
         source_file = bronze_record["source_file"]

@@ -3,6 +3,7 @@ import shutil
 from pathlib import Path
 
 from src.pipeline.ocr import ocr_extract
+from src.utils.logging import configure_logging
 
 RAW_DIR = Path("data/raw")
 BRONZE_DIR = Path("data/bronze")
@@ -41,3 +42,8 @@ def run_bronze_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) 
 
 def run_ocr_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) -> None:
     run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
+
+
+if __name__ == "__main__":
+    configure_logging("bronze.log")
+    run_bronze_pipeline()

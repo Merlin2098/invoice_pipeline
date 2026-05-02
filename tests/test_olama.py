@@ -9,7 +9,7 @@ from ollama import ResponseError
 
 from src.pipeline.ocr import ocr_extract
 
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3-vl:8b")
 ERRORS_DIR = Path("data/errors")
 
 logger = logging.getLogger(__name__)

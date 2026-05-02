@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -7,8 +8,10 @@ from typing import Any
 import requests
 import yaml
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "qwen3:8b"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
+OLLAMA_TAGS_URL = f"{OLLAMA_BASE_URL}/api/tags"
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3-vl:8b")
 CONTRACT_PATH = Path("src/config/data_contract.yaml")
 
 logger = logging.getLogger(__name__)
@@ -27,10 +30,32 @@ def contract_field_names(contract: dict[str, Any] | None = None) -> list[str]:
     return names
 
 
-def call_ollama(prompt: str) -> str:
+def list_available_models() -> list[str]:
+    response = requests.get(OLLAMA_TAGS_URL, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    return [model.get("name", "") for model in payload.get("models", []) if model.get("name")]
+
+
+def validate_ollama_model(model: str = MODEL_NAME) -> None:
+    try:
+        available_models = list_available_models()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Ollama is not available at {OLLAMA_BASE_URL}: {exc}") from exc
+
+    if model not in available_models:
+        available = ", ".join(available_models) or "none"
+        raise RuntimeError(
+            f"Ollama model '{model}' is not installed. "
+            f"Available models: {available}. "
+            "Set OLLAMA_MODEL to an installed model or pull the requested model."
+        )
+
+
+def call_ollama(prompt: str, model: str = MODEL_NAME) -> str:
     response = requests.post(
-        OLLAMA_URL,
-        json={"model": MODEL_NAME, "prompt": prompt, "stream": False},
+        OLLAMA_GENERATE_URL,
+        json={"model": model, "prompt": prompt, "stream": False},
         timeout=180,
     )
     response.raise_for_status()

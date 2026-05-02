@@ -10,6 +10,7 @@ import run_pipeline
 from src.pipeline import llm_ollama
 from src.pipeline.bronze_pipeline import run_bronze_pipeline
 from src.pipeline.gold_model import build_tables, normalize_amount, normalize_date, run_gold_pipeline
+from src.pipeline.llm_ollama import MODEL_NAME, validate_ollama_model
 from src.pipeline.ocr import clean_text, ocr_extract
 from src.pipeline.silver_pipeline import process_with_llm
 from src.pipeline.silver_pipeline import run_silver_pipeline
@@ -96,6 +97,21 @@ def test_parse_json_response_handles_common_shapes() -> None:
     assert llm_ollama.parse_json_response("not json")["ocr_confidence_flags"] == ["invalid_json_response"]
 
 
+def test_ollama_defaults_to_available_text_extraction_model() -> None:
+    assert MODEL_NAME == "qwen3-vl:8b"
+
+
+def test_validate_ollama_model_fails_fast_for_missing_model(monkeypatch) -> None:
+    monkeypatch.setattr("src.pipeline.llm_ollama.list_available_models", lambda: ["deepseek-r1:8b"])
+
+    try:
+        validate_ollama_model("qwen3-vl:8b")
+    except RuntimeError as exc:
+        assert "Available models: deepseek-r1:8b" in str(exc)
+    else:
+        raise AssertionError("Expected missing Ollama model to fail fast")
+
+
 def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     test_dir = clean_test_dir("silver_pipeline")
     bronze_dir = test_dir / "bronze"
@@ -109,7 +125,7 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
 
     monkeypatch.setattr("src.pipeline.silver_pipeline.extract_structured_data", fake_extract)
 
-    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0)
+    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
 
     output = json.loads((silver_dir / "sample.json").read_text(encoding="utf-8"))
     assert output["source_file"] == "sample.txt"
@@ -130,7 +146,7 @@ def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:
         lambda text: {"document_id": "TI1712-0087", "document_type": "contribution"},
     )
 
-    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0)
+    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
 
     assert (silver_dir / "TI1712-0087.json").exists()
 
