@@ -10,7 +10,7 @@ import run_pipeline
 from src.pipeline import llm_ollama
 from src.pipeline.bronze_pipeline import run_bronze_pipeline
 from src.pipeline.gold_model import build_tables, normalize_amount, normalize_date, run_gold_pipeline
-from src.pipeline.llm_ollama import MODEL_NAME, validate_ollama_model
+from src.pipeline.llm_ollama import MODEL_NAME, build_ollama_payload, validate_ollama_model
 from src.pipeline.ocr import clean_text, ocr_extract
 from src.pipeline.silver_pipeline import process_with_llm
 from src.pipeline.silver_pipeline import run_silver_pipeline
@@ -98,14 +98,24 @@ def test_parse_json_response_handles_common_shapes() -> None:
 
 
 def test_ollama_defaults_to_available_text_extraction_model() -> None:
-    assert MODEL_NAME == "qwen3-vl:8b"
+    assert MODEL_NAME == "qwen3.5:4b"
+
+
+def test_ollama_payload_forces_json_and_bounded_output() -> None:
+    payload = build_ollama_payload("extract this")
+
+    assert payload["model"] == "qwen3.5:4b"
+    assert payload["format"] == "json"
+    assert payload["stream"] is False
+    assert payload["options"]["temperature"] == 0
+    assert payload["options"]["num_predict"] == 800
 
 
 def test_validate_ollama_model_fails_fast_for_missing_model(monkeypatch) -> None:
     monkeypatch.setattr("src.pipeline.llm_ollama.list_available_models", lambda: ["deepseek-r1:8b"])
 
     try:
-        validate_ollama_model("qwen3-vl:8b")
+        validate_ollama_model("qwen3.5:4b")
     except RuntimeError as exc:
         assert "Available models: deepseek-r1:8b" in str(exc)
     else:
@@ -132,6 +142,31 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     assert output["document_id"] == "sample"
     assert output["recipient_name"] is None
     assert output["raw_text_path"].endswith("sample.txt")
+
+
+def test_silver_pipeline_writes_failed_extraction_to_errors(monkeypatch) -> None:
+    test_dir = clean_test_dir("silver_pipeline_errors")
+    bronze_dir = test_dir / "bronze"
+    silver_dir = test_dir / "silver"
+    errors_dir = test_dir / "errors" / "silver"
+    bronze_dir.mkdir()
+    (bronze_dir / "bad.txt").write_text("INVOICE\nTOTAL $10.00", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.pipeline.silver_pipeline.extract_structured_data",
+        lambda text: {"ocr_confidence_flags": ["invalid_json_response"]},
+    )
+
+    run_silver_pipeline(
+        bronze_dir=bronze_dir,
+        silver_dir=silver_dir,
+        errors_dir=errors_dir,
+        max_retries=0,
+        validate_model=False,
+    )
+
+    assert not (silver_dir / "bad.json").exists()
+    assert (errors_dir / "bad.json").exists()
 
 
 def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:

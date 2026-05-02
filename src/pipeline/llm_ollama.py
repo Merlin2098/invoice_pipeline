@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,9 @@ import yaml
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE_URL}/api/tags"
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3-vl:8b")
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "800"))
 CONTRACT_PATH = Path("src/config/data_contract.yaml")
 
 logger = logging.getLogger(__name__)
@@ -52,31 +55,46 @@ def validate_ollama_model(model: str = MODEL_NAME) -> None:
         )
 
 
-def call_ollama(prompt: str, model: str = MODEL_NAME) -> str:
+def build_ollama_payload(prompt: str, model: str = MODEL_NAME) -> dict[str, Any]:
+    return {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0,
+            "num_predict": OLLAMA_NUM_PREDICT,
+        },
+    }
+
+
+def call_ollama(prompt: str, model: str = MODEL_NAME, timeout: int = OLLAMA_TIMEOUT_SECONDS) -> str:
+    start = time.perf_counter()
     response = requests.post(
         OLLAMA_GENERATE_URL,
-        json={"model": model, "prompt": prompt, "stream": False},
-        timeout=180,
+        json=build_ollama_payload(prompt, model=model),
+        timeout=timeout,
     )
     response.raise_for_status()
     payload = response.json()
+    elapsed = time.perf_counter() - start
+    logger.info("Ollama completed model=%s prompt_chars=%s elapsed_seconds=%.2f", model, len(prompt), elapsed)
     return str(payload.get("response", "")).strip()
 
 
 def build_extraction_prompt(text: str) -> str:
-    fields = "\n".join(f"- {field}" for field in contract_field_names())
+    fields = ", ".join(contract_field_names())
     return f"""
-You are extracting structured data from noisy OCR text.
+Extract fields from noisy OCR text.
+Return one JSON object only. No markdown. No explanations.
+Use exactly these keys: {fields}
+Missing or uncertain values must be null.
+document_type must be one of: invoice, contribution, cost_memo, unknown.
+Dates must use YYYY-MM-DD when possible.
+Amounts must be numbers, not strings. Use currency "USD" if the text uses "$".
+ocr_confidence_flags must be an array of short strings.
 
-Return ONLY valid JSON. Do not include markdown, comments, explanations, or prose.
-Use exactly these fields. If a field is missing or uncertain, set it to null.
-Use ocr_confidence_flags as a JSON array of short warning strings.
-Use document_type as one of: invoice, contribution, cost_memo, unknown.
-
-Fields:
-{fields}
-
-OCR text:
+OCR:
 {text}
 """.strip()
 

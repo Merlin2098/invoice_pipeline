@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,9 @@ from src.utils.logging import configure_logging
 
 BRONZE_DIR = Path("data/bronze")
 SILVER_DIR = Path("data/silver")
-MAX_RETRIES = 2
+SILVER_ERRORS_DIR = Path("data/errors/silver")
+MAX_RETRIES = 1
+BLOCKING_FLAGS = {"invalid_json_response", "empty_llm_response", "ollama_request_failed"}
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +53,12 @@ def load_bronze_text(bronze_dir: Path = BRONZE_DIR) -> list[dict[str, str]]:
 
 def process_with_llm(text: str, max_retries: int = MAX_RETRIES) -> dict[str, Any]:
     last_record: dict[str, Any] = {}
-    retry_flags = {"invalid_json_response", "empty_llm_response", "ollama_request_failed"}
 
     for attempt in range(max_retries + 1):
         record = extract_structured_data(text)
         flags = set(ensure_quality_flags(record))
         last_record = record
-        if flags.isdisjoint(retry_flags):
+        if flags.isdisjoint(BLOCKING_FLAGS):
             return record
         logger.warning("LLM extraction attempt %s failed with flags: %s", attempt + 1, sorted(flags))
 
@@ -74,18 +76,30 @@ def safe_output_stem(document_id: Any) -> str:
     return stem.strip("._") or "unknown_document"
 
 
+def has_blocking_flags(record: dict[str, Any]) -> bool:
+    return not set(ensure_quality_flags(record)).isdisjoint(BLOCKING_FLAGS)
+
+
 def run_silver_pipeline(
     bronze_dir: Path = BRONZE_DIR,
     silver_dir: Path = SILVER_DIR,
+    errors_dir: Path = SILVER_ERRORS_DIR,
     max_retries: int = MAX_RETRIES,
     validate_model: bool = True,
 ) -> None:
     silver_dir.mkdir(parents=True, exist_ok=True)
+    errors_dir.mkdir(parents=True, exist_ok=True)
     if validate_model:
         validate_ollama_model()
 
     for bronze_record in load_bronze_text(bronze_dir):
+        start = time.perf_counter()
         source_file = bronze_record["source_file"]
+        logger.info(
+            "Starting LLM extraction source_file=%s text_chars=%s",
+            source_file,
+            len(bronze_record["text"]),
+        )
         record = process_with_llm(bronze_record["text"], max_retries=max_retries)
         flags = ensure_quality_flags(record)
 
@@ -96,9 +110,14 @@ def run_silver_pipeline(
             flags.append("inferred_document_id")
 
         apply_contract_defaults(record)
-        output_path = silver_dir / f"{safe_output_stem(record['document_id'])}.json"
+        output_dir = errors_dir if has_blocking_flags(record) else silver_dir
+        output_path = output_dir / f"{safe_output_stem(record['document_id'])}.json"
         write_silver_output(record, output_path)
-        logger.info("Wrote silver JSON to %s", output_path)
+        elapsed = time.perf_counter() - start
+        if output_dir == errors_dir:
+            logger.warning("Wrote failed silver extraction to %s elapsed_seconds=%.2f", output_path, elapsed)
+        else:
+            logger.info("Wrote silver JSON to %s elapsed_seconds=%.2f", output_path, elapsed)
 
 
 if __name__ == "__main__":
