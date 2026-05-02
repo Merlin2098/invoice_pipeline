@@ -1,0 +1,145 @@
+contract:
+  name: local_document_extraction
+  version: 1
+  description: >
+    Contract for heterogeneous OCR documents extracted into silver JSON and
+    mapped into gold relational tables.
+  medallion_layers:
+    raw: Original source files loaded into data/raw, such as scanned invoice images.
+    bronze: Plain OCR text files generated from raw files with pytesseract, without semantic transformation.
+    silver: Structured JSON extracted from bronze OCR text by the local Ollama LLM.
+    gold: Relational Parquet tables consolidated from silver JSON and ready for analytics.
+
+common:
+  source_file:
+    type: string
+    nullable: false
+    description: Name of the bronze OCR text file used as the silver source.
+  document_type:
+    type: string
+    nullable: false
+    description: Normalized type such as invoice, contribution, cost_memo, or unknown.
+  document_id:
+    type: string
+    nullable: false
+    description: Stable document identifier used as the gold primary key.
+  document_date:
+    type: date
+    nullable: true
+    description: Primary document date normalized to ISO format when possible.
+  vendor_or_requester:
+    type: string
+    nullable: true
+    description: Vendor, requester, supplier, agency, or organization associated with the document.
+  recipient_name:
+    type: string
+    nullable: true
+    description: Recipient, candidate, customer, or payee name found in the document.
+  recipient_address:
+    type: string
+    nullable: true
+    description: Recipient or customer mailing address.
+  description:
+    type: string
+    nullable: true
+    description: Short description of the document purpose, services, or request.
+  amount:
+    type: float
+    nullable: true
+    description: Primary amount detected in the document.
+  total_amount:
+    type: float
+    nullable: true
+    description: Total amount or total project cost when distinct from amount.
+  currency:
+    type: string
+    nullable: true
+    description: Three-letter currency code inferred or extracted from the document.
+  account_code:
+    type: string
+    nullable: true
+    description: Internal account code or charge code.
+  check_payable_to:
+    type: string
+    nullable: true
+    description: Name or organization to which a check should be made payable.
+  payment_terms:
+    type: string
+    nullable: true
+    description: Payment terms such as Net 30 or due upon receipt.
+  notes:
+    type: string
+    nullable: true
+    description: Free-form notes, event dates, approval notes, or other extracted context.
+  raw_text_path:
+    type: string
+    nullable: false
+    description: Path to the bronze OCR text generated from the raw source file.
+  ocr_confidence_flags:
+    type: list[string]
+    nullable: false
+    description: Quality and extraction warnings attached to the record.
+
+invoice:
+  invoice_number:
+    type: string
+    nullable: true
+    description: Invoice number or invoice identifier.
+  customer_name:
+    type: string
+    nullable: true
+    description: Customer or billed entity.
+  project_name:
+    type: string
+    nullable: true
+    description: Project, job, campaign, or work name associated with the invoice.
+  job_number:
+    type: string
+    nullable: true
+    description: Job number, program number, or internal work order reference.
+  line_items_text:
+    type: string
+    nullable: true
+    description: Extracted line-item text or summarized item details.
+  tax_amount:
+    type: float
+    nullable: true
+    description: Tax amount if present.
+  subtotal_amount:
+    type: float
+    nullable: true
+    description: Subtotal before tax or final amount due.
+  amount_due:
+    type: float
+    nullable: true
+    description: Final amount due.
+
+contribution:
+  state_flag:
+    type: boolean
+    nullable: true
+    description: Whether the contribution request is marked as state-level.
+  local_flag:
+    type: boolean
+    nullable: true
+    description: Whether the contribution request is marked as local-level.
+  current_office_district:
+    type: string
+    nullable: true
+    description: Current office and district listed for the recipient.
+  aspired_office_district:
+    type: string
+    nullable: true
+    description: Aspired office and district listed for the recipient.
+  party:
+    type: string
+    nullable: true
+    description: Political party associated with the recipient or committee.
+  leadership_position:
+    type: string
+    nullable: true
+    description: Leadership position or committee role when present.
+  approved_by:
+    type: string
+    nullable: true
+    description: Person or signature text associated with approval.

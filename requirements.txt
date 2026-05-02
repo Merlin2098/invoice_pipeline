@@ -5,6 +5,7 @@ boto3
 # Testing and config
 pytest
 pyyaml
+requests
 ruff
 
 # Data handling
