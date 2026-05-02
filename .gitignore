@@ -1,0 +1,77 @@
+# =========================
+# 🐍 Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Python tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Build / packaging
+build/
+dist/
+
+# =========================
+# 🧪 Logs & runtime artifacts
+# =========================
+logs/
+*.log
+
+# Custom artifacts (zips, outputs)
+artifacts/*.zip
+
+# =========================
+# 🏗️ Terraform
+# =========================
+# Terraform core
+.terraform/
+**/.terraform/
+
+# State files
+*.tfstate
+*.tfstate.*
+
+# Crash logs
+crash.log
+
+# =========================
+# 🔐 Terraform variables (SENSITIVE)
+# =========================
+*.tfvars
+*.auto.tfvars
+
+# Allow examples
+!*.example
+
+# =========================
+# 🔑 Environment variables
+# =========================
+.env
+.env.*
+!infra/env/.env.example
+# =========================
+# 🛠️ IDE / Editor
+# =========================
+.vscode/
+
+# =========================
+# 💻 OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+.ai/
+
+# Local template helper files
+ai/
+AGENTS.md
+Makefile
+data/

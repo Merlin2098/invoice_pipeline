@@ -1,0 +1,7 @@
+project_name = "data-platform"
+environment  = "dev"
+aws_region   = "us-east-1"
+
+tags = {
+  Owner = "data-engineering"
+}
