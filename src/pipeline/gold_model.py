@@ -1,12 +1,10 @@
 import json
 import logging
-import re
-from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from dateutil import parser as date_parser
+from src.pipeline.postprocess import normalize_amount, normalize_date
 from src.utils.logging import configure_logging
 
 SILVER_DIR = Path("data/silver")
@@ -84,45 +82,6 @@ def load_silver_json(silver_dir: Path = SILVER_DIR) -> list[dict[str, Any]]:
         records.append(record)
 
     return records
-
-
-def normalize_amount(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-
-    text = str(value)
-    spaced_cents = re.search(r"(\d[\d,]*)\s+(\d{2})(?!\d)", text)
-    if spaced_cents and "." not in text:
-        text = f"{spaced_cents.group(1)}.{spaced_cents.group(2)}"
-    text = text.replace(",", "")
-    text = re.sub(r"[\[\]\(\){}A-Za-z$]", "", text)
-    text = re.sub(r"\s+", "", text)
-
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
-
-
-def normalize_date(value: Any) -> str | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, date):
-        return value.isoformat()
-
-    text = str(value).strip()
-    try:
-        parsed = date_parser.parse(text, fuzzy=True)
-    except (ValueError, OverflowError):
-        return None
-
-    return parsed.date().isoformat()
 
 
 def normalize_currency(record: dict[str, Any]) -> str | None:

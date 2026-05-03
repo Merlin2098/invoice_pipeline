@@ -10,8 +10,9 @@ import run_pipeline
 from src.pipeline import llm_ollama
 from src.pipeline.bronze_pipeline import run_bronze_pipeline
 from src.pipeline.gold_model import build_tables, normalize_amount, normalize_date, run_gold_pipeline
-from src.pipeline.llm_ollama import MODEL_NAME, build_ollama_payload, validate_ollama_model
+from src.pipeline.llm_ollama import MODEL_NAME, MINIMAL_EXTRACTION_SCHEMA, build_ollama_payload, validate_ollama_model
 from src.pipeline.ocr import clean_text, ocr_extract
+from src.pipeline.postprocess import classify_document_type, clean_string, map_to_contract
 from src.pipeline.silver_pipeline import process_with_llm
 from src.pipeline.silver_pipeline import run_silver_pipeline
 from src.utils import logging as pipeline_logging
@@ -88,10 +89,10 @@ def test_configure_logging_writes_to_logs_dir(monkeypatch) -> None:
 
 
 def test_parse_json_response_handles_common_shapes() -> None:
-    assert llm_ollama.parse_json_response('{"document_type": "invoice"}')["document_type"] == "invoice"
+    assert llm_ollama.parse_json_response('{"total_amount": 10}')["total_amount"] == 10
     assert (
-        llm_ollama.parse_json_response('```json\n{"document_type": "contribution"}\n```')["document_type"]
-        == "contribution"
+        llm_ollama.parse_json_response('```json\n{"vendor_name": "Acme"}\n``` trailing text')["vendor_name"]
+        == "Acme"
     )
     assert llm_ollama.parse_json_response("")["ocr_confidence_flags"] == ["empty_llm_response"]
     assert llm_ollama.parse_json_response("not json")["ocr_confidence_flags"] == ["invalid_json_response"]
@@ -105,7 +106,8 @@ def test_ollama_payload_forces_json_and_bounded_output() -> None:
     payload = build_ollama_payload("extract this")
 
     assert payload["model"] == "qwen3.5:4b"
-    assert payload["format"] == "json"
+    assert payload["format"] == MINIMAL_EXTRACTION_SCHEMA
+    assert payload["think"] is False
     assert payload["stream"] is False
     assert payload["options"]["temperature"] == 0
     assert payload["options"]["num_predict"] == 800
@@ -131,7 +133,7 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
 
     def fake_extract(text: str) -> dict:
         assert "TOTAL" in text
-        return {"document_type": "invoice", "amount": "$10.00", "ocr_confidence_flags": []}
+        return {"total_amount": "$10.00", "document_date": None, "vendor_name": "Acme", "ocr_confidence_flags": []}
 
     monkeypatch.setattr("src.pipeline.silver_pipeline.extract_structured_data", fake_extract)
 
@@ -140,6 +142,9 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     output = json.loads((silver_dir / "sample.json").read_text(encoding="utf-8"))
     assert output["source_file"] == "sample.txt"
     assert output["document_id"] == "sample"
+    assert output["document_type"] == "invoice"
+    assert output["vendor_or_requester"] == "Acme"
+    assert output["total_amount"] == 10.0
     assert output["recipient_name"] is None
     assert output["raw_text_path"].endswith("sample.txt")
 
@@ -178,12 +183,12 @@ def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "src.pipeline.silver_pipeline.extract_structured_data",
-        lambda text: {"document_id": "TI1712-0087", "document_type": "contribution"},
+        lambda text: {"total_amount": None, "document_date": None, "vendor_name": None},
     )
 
     run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
 
-    assert (silver_dir / "TI1712-0087.json").exists()
+    assert (silver_dir / "source_name.json").exists()
 
 
 def test_process_with_llm_retries_invalid_json(monkeypatch) -> None:
@@ -201,6 +206,30 @@ def test_normalizers_handle_ocr_noise() -> None:
     assert normalize_amount("$700 00") == 700.0
     assert normalize_amount("[5200.00 J") == 5200.0
     assert normalize_date("October 26, 1998") == "1998-10-26"
+
+
+def test_postprocess_maps_minimal_extraction_to_contract() -> None:
+    mapped = map_to_contract(
+        {"total_amount": "$500.00", "document_date": "9/26/97", "vendor_name": " â€˜AcmeÂ® "},
+        source_file="sample.txt",
+        raw_text_path="data/bronze/sample.txt",
+        text="POLITICAL CAMPAIGN CONTRIBUTION REQUEST Amount $500.00",
+    )
+
+    assert mapped["document_id"] == "sample"
+    assert mapped["document_type"] == "contribution"
+    assert mapped["document_date"] == "1997-09-26"
+    assert mapped["total_amount"] == 500.0
+    assert mapped["amount"] == 500.0
+    assert mapped["currency"] == "USD"
+    assert mapped["vendor_or_requester"] == "Acme"
+
+
+def test_keyword_classification_and_string_cleaning() -> None:
+    assert classify_document_type("INVOICE TOTAL") == "invoice"
+    assert classify_document_type("POLITICAL CAMPAIGN CONTRIBUTION REQUEST") == "contribution"
+    assert classify_document_type("plain memo") == "unknown"
+    assert clean_string(" â€˜VendorÂ®  Name ") == "Vendor Name"
 
 
 def test_gold_mapping_builds_documents_and_child_tables() -> None:

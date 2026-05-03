@@ -5,7 +5,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from src.pipeline.llm_ollama import contract_field_names, extract_structured_data, validate_ollama_model
+from src.pipeline.llm_ollama import extract_structured_data, validate_ollama_model
+from src.pipeline.postprocess import map_to_contract
 from src.utils.logging import configure_logging
 
 BRONZE_DIR = Path("data/bronze")
@@ -30,10 +31,6 @@ def ensure_quality_flags(record: dict[str, Any]) -> list[str]:
 
 
 def apply_contract_defaults(record: dict[str, Any]) -> dict[str, Any]:
-    for field in contract_field_names():
-        if field == "ocr_confidence_flags":
-            continue
-        record.setdefault(field, None)
     ensure_quality_flags(record)
     return record
 
@@ -109,7 +106,16 @@ def run_silver_pipeline(
             record["document_id"] = Path(source_file).stem
             flags.append("inferred_document_id")
 
-        apply_contract_defaults(record)
+        if not has_blocking_flags(record):
+            record = map_to_contract(
+                record,
+                source_file=source_file,
+                raw_text_path=bronze_record["raw_text_path"],
+                text=bronze_record["text"],
+            )
+        else:
+            apply_contract_defaults(record)
+
         output_dir = errors_dir if has_blocking_flags(record) else silver_dir
         output_path = output_dir / f"{safe_output_stem(record['document_id'])}.json"
         write_silver_output(record, output_path)

@@ -3,11 +3,9 @@ import logging
 import os
 import re
 import time
-from pathlib import Path
 from typing import Any
 
 import requests
-import yaml
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
@@ -15,22 +13,18 @@ OLLAMA_TAGS_URL = f"{OLLAMA_BASE_URL}/api/tags"
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
 OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "800"))
-CONTRACT_PATH = Path("src/config/data_contract.yaml")
+MINIMAL_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "total_amount": {"type": ["number", "string", "null"]},
+        "document_date": {"type": ["string", "null"]},
+        "vendor_name": {"type": ["string", "null"]},
+    },
+    "required": ["total_amount", "document_date", "vendor_name"],
+    "additionalProperties": False,
+}
 
 logger = logging.getLogger(__name__)
-
-
-def load_contract(contract_path: Path = CONTRACT_PATH) -> dict[str, Any]:
-    with contract_path.open(encoding="utf-8") as file:
-        return yaml.safe_load(file)
-
-
-def contract_field_names(contract: dict[str, Any] | None = None) -> list[str]:
-    contract = contract or load_contract()
-    names: list[str] = []
-    for group in ("common", "invoice", "contribution"):
-        names.extend(contract.get(group, {}).keys())
-    return names
 
 
 def list_available_models() -> list[str]:
@@ -60,7 +54,8 @@ def build_ollama_payload(prompt: str, model: str = MODEL_NAME) -> dict[str, Any]
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "format": "json",
+        "format": MINIMAL_EXTRACTION_SCHEMA,
+        "think": False,
         "options": {
             "temperature": 0,
             "num_predict": OLLAMA_NUM_PREDICT,
@@ -79,20 +74,25 @@ def call_ollama(prompt: str, model: str = MODEL_NAME, timeout: int = OLLAMA_TIME
     payload = response.json()
     elapsed = time.perf_counter() - start
     logger.info("Ollama completed model=%s prompt_chars=%s elapsed_seconds=%.2f", model, len(prompt), elapsed)
-    return str(payload.get("response", "")).strip()
+    response_text = str(payload.get("response") or payload.get("thinking") or "").strip()
+    if not payload.get("response") and payload.get("thinking"):
+        logger.warning("Ollama returned JSON in thinking field; using it as fallback")
+    return response_text
 
 
 def build_extraction_prompt(text: str) -> str:
-    fields = ", ".join(contract_field_names())
     return f"""
-Extract fields from noisy OCR text.
-Return one JSON object only. No markdown. No explanations.
-Use exactly these keys: {fields}
-Missing or uncertain values must be null.
-document_type must be one of: invoice, contribution, cost_memo, unknown.
-Dates must use YYYY-MM-DD when possible.
-Amounts must be numbers, not strings. Use currency "USD" if the text uses "$".
-ocr_confidence_flags must be an array of short strings.
+Extract basic invoice information.
+
+Return ONLY valid JSON:
+{{
+  "total_amount": number or null,
+  "document_date": string or null,
+  "vendor_name": string or null
+}}
+
+No explanations.
+Missing values = null.
 
 OCR:
 {text}
@@ -108,10 +108,12 @@ def parse_json_response(response_text: str) -> dict[str, Any]:
     if fenced:
         text = fenced.group(1).strip()
     elif "{" in text and "}" in text:
-        text = text[text.find("{") : text.rfind("}") + 1]
+        text = text[text.find("{") :]
+    else:
+        return {"ocr_confidence_flags": ["invalid_json_response"]}
 
     try:
-        parsed = json.loads(text)
+        parsed, _ = json.JSONDecoder().raw_decode(text)
     except json.JSONDecodeError:
         logger.warning("Failed to parse LLM JSON response")
         return {"ocr_confidence_flags": ["invalid_json_response"]}
