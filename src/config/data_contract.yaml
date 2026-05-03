@@ -6,15 +6,15 @@ contract:
     mapped into gold relational tables.
   medallion_layers:
     raw: Original source files loaded into data/raw, such as scanned invoice images.
-    bronze: Plain OCR text files generated from raw files with pytesseract, without semantic transformation.
-    silver: Structured JSON extracted from bronze OCR text by the local Ollama LLM.
+    bronze: Markdown OCR files generated from raw files with pytesseract, without semantic transformation.
+    silver: Structured JSON extracted from bronze OCR markdown by the local Ollama LLM.
     gold: Relational Parquet tables consolidated from silver JSON and ready for analytics.
 
 common:
   source_file:
     type: string
     nullable: false
-    description: Name of the bronze OCR text file used as the silver source.
+    description: Name of the bronze OCR markdown file used as the silver source.
   document_type:
     type: string
     nullable: false
@@ -74,7 +74,7 @@ common:
   raw_text_path:
     type: string
     nullable: false
-    description: Path to the bronze OCR text generated from the raw source file.
+    description: Path to the bronze OCR markdown generated from the raw source file.
   ocr_confidence_flags:
     type: list[string]
     nullable: false

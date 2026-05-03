@@ -22,25 +22,6 @@ DOCUMENT_COLUMNS = (
     "currency",
     "raw_text_path",
 )
-INVOICE_COLUMNS = (
-    "document_id",
-    "invoice_number",
-    "customer_name",
-    "project_name",
-    "job_number",
-    "subtotal_amount",
-    "tax_amount",
-    "amount_due",
-)
-CONTRIBUTION_COLUMNS = (
-    "document_id",
-    "party",
-    "state_flag",
-    "local_flag",
-    "current_office_district",
-    "aspired_office_district",
-    "approved_by",
-)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +57,8 @@ def load_silver_json(silver_dir: Path = SILVER_DIR) -> list[dict[str, Any]]:
             logger.warning("Non-object silver JSON skipped: %s", path)
             continue
 
-        record.setdefault("source_file", f"{path.stem}.txt")
-        record.setdefault("raw_text_path", Path("data/bronze", f"{path.stem}.txt").as_posix())
+        record.setdefault("source_file", f"{path.stem}.md")
+        record.setdefault("raw_text_path", Path("data/bronze", f"{path.stem}.md").as_posix())
         record.setdefault("document_id", path.stem)
         records.append(record)
 
@@ -169,7 +150,7 @@ def _pick(record: dict[str, Any], columns: tuple[str, ...]) -> dict[str, Any]:
     return {column: record.get(column) for column in columns}
 
 
-def map_to_relational(record: dict[str, Any]) -> dict[str, dict[str, Any] | None]:
+def map_to_document(record: dict[str, Any]) -> dict[str, Any]:
     if not record.get("document_id") and record.get("source_file"):
         record["document_id"] = Path(str(record["source_file"])).stem
         add_flag(record, "inferred_document_id")
@@ -177,51 +158,25 @@ def map_to_relational(record: dict[str, Any]) -> dict[str, dict[str, Any] | None
     record["document_type"] = classify_document_type(record)
     normalize_record(record)
 
-    mapped: dict[str, dict[str, Any] | None] = {
-        "documents": _pick(record, DOCUMENT_COLUMNS),
-        "invoices": None,
-        "contributions": None,
-    }
-    if record["document_type"] == "invoice":
-        mapped["invoices"] = _pick(record, INVOICE_COLUMNS)
-    elif record["document_type"] == "contribution":
-        mapped["contributions"] = _pick(record, CONTRIBUTION_COLUMNS)
-
-    return mapped
+    return _pick(record, DOCUMENT_COLUMNS)
 
 
-def build_tables(records: list[dict[str, Any]]) -> dict[str, pd.DataFrame]:
-    documents = []
-    invoices = []
-    contributions = []
-
-    for record in records:
-        mapped = map_to_relational(record)
-        documents.append(mapped["documents"])
-        if mapped["invoices"]:
-            invoices.append(mapped["invoices"])
-        if mapped["contributions"]:
-            contributions.append(mapped["contributions"])
-
-    return {
-        "documents": pd.DataFrame(documents, columns=DOCUMENT_COLUMNS),
-        "invoices": pd.DataFrame(invoices, columns=INVOICE_COLUMNS),
-        "contributions": pd.DataFrame(contributions, columns=CONTRIBUTION_COLUMNS),
-    }
+def build_documents_table(records: list[dict[str, Any]]) -> pd.DataFrame:
+    documents = [map_to_document(record) for record in records]
+    return pd.DataFrame(documents, columns=DOCUMENT_COLUMNS)
 
 
-def write_outputs(tables: dict[str, pd.DataFrame], gold_dir: Path = GOLD_DIR) -> None:
+def write_outputs(documents: pd.DataFrame, gold_dir: Path = GOLD_DIR) -> None:
     gold_dir.mkdir(parents=True, exist_ok=True)
-    for name, frame in tables.items():
-        output_path = gold_dir / f"{name}.parquet"
-        frame.to_parquet(output_path, index=False)
-        logger.info("Wrote gold table to %s", output_path)
+    output_path = gold_dir / "documents.parquet"
+    documents.to_parquet(output_path, index=False)
+    logger.info("Wrote gold documents table to %s", output_path)
 
 
 def run_gold_pipeline(silver_dir: Path = SILVER_DIR, gold_dir: Path = GOLD_DIR) -> None:
     records = load_silver_json(silver_dir)
-    tables = build_tables(records)
-    write_outputs(tables, gold_dir)
+    documents = build_documents_table(records)
+    write_outputs(documents, gold_dir)
 
 
 if __name__ == "__main__":

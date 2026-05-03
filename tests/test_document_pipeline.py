@@ -8,8 +8,8 @@ from PIL import Image
 
 import run_pipeline
 from src.pipeline import llm_ollama
-from src.pipeline.bronze_pipeline import run_bronze_pipeline
-from src.pipeline.gold_model import build_tables, normalize_amount, normalize_date, run_gold_pipeline
+from src.pipeline.bronze_pipeline import format_ocr_markdown, run_bronze_pipeline
+from src.pipeline.gold_model import build_documents_table, normalize_amount, normalize_date, run_gold_pipeline
 from src.pipeline.llm_ollama import MODEL_NAME, MINIMAL_EXTRACTION_SCHEMA, build_ollama_payload, validate_ollama_model
 from src.pipeline.ocr import clean_text, ocr_extract
 from src.pipeline.postprocess import classify_document_type, clean_string, map_to_contract
@@ -34,7 +34,7 @@ def test_data_contract_contains_required_groups() -> None:
 
     assert {"common", "invoice", "contribution"}.issubset(contract)
     assert "Original source files loaded into data/raw" in contract["contract"]["medallion_layers"]["raw"]
-    assert "Plain OCR text files generated from raw files" in contract["contract"]["medallion_layers"]["bronze"]
+    assert "Markdown OCR files generated from raw files" in contract["contract"]["medallion_layers"]["bronze"]
     assert contract["common"]["document_id"]["nullable"] is False
     assert contract["invoice"]["amount_due"]["type"] == "float"
     assert contract["contribution"]["party"]["type"] == "string"
@@ -62,7 +62,16 @@ def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch) -> None:
 
     run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
 
-    assert (bronze_dir / "invoice.txt").read_text(encoding="utf-8") == "OCR for invoice"
+    output = (bronze_dir / "invoice.md").read_text(encoding="utf-8")
+    assert "# OCR Extract" in output
+    assert "OCR for invoice" in output
+
+
+def test_ocr_markdown_includes_source_metadata() -> None:
+    markdown = format_ocr_markdown("OCR body", Path("data/raw/invoice.tif"))
+
+    assert "- Source file: `invoice.tif`" in markdown
+    assert "```text\nOCR body\n```" in markdown
 
 
 def test_root_pipeline_runs_phases_in_order(monkeypatch) -> None:
@@ -129,7 +138,7 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     bronze_dir = test_dir / "bronze"
     silver_dir = test_dir / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "sample.txt").write_text("INVOICE\nTOTAL $10.00", encoding="utf-8")
+    (bronze_dir / "sample.md").write_text("# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8")
 
     def fake_extract(text: str) -> dict:
         assert "TOTAL" in text
@@ -140,13 +149,13 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
 
     output = json.loads((silver_dir / "sample.json").read_text(encoding="utf-8"))
-    assert output["source_file"] == "sample.txt"
+    assert output["source_file"] == "sample.md"
     assert output["document_id"] == "sample"
     assert output["document_type"] == "invoice"
     assert output["vendor_or_requester"] == "Acme"
     assert output["total_amount"] == 10.0
     assert output["recipient_name"] is None
-    assert output["raw_text_path"].endswith("sample.txt")
+    assert output["raw_text_path"].endswith("sample.md")
 
 
 def test_silver_pipeline_writes_failed_extraction_to_errors(monkeypatch) -> None:
@@ -155,7 +164,7 @@ def test_silver_pipeline_writes_failed_extraction_to_errors(monkeypatch) -> None
     silver_dir = test_dir / "silver"
     errors_dir = test_dir / "errors" / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "bad.txt").write_text("INVOICE\nTOTAL $10.00", encoding="utf-8")
+    (bronze_dir / "bad.md").write_text("INVOICE\nTOTAL $10.00", encoding="utf-8")
 
     monkeypatch.setattr(
         "src.pipeline.silver_pipeline.extract_structured_data",
@@ -179,7 +188,7 @@ def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:
     bronze_dir = test_dir / "bronze"
     silver_dir = test_dir / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "source_name.txt").write_text("POLITICAL CAMPAIGN CONTRIBUTION REQUEST", encoding="utf-8")
+    (bronze_dir / "source_name.md").write_text("POLITICAL CAMPAIGN CONTRIBUTION REQUEST", encoding="utf-8")
 
     monkeypatch.setattr(
         "src.pipeline.silver_pipeline.extract_structured_data",
@@ -211,8 +220,8 @@ def test_normalizers_handle_ocr_noise() -> None:
 def test_postprocess_maps_minimal_extraction_to_contract() -> None:
     mapped = map_to_contract(
         {"total_amount": "$500.00", "document_date": "9/26/97", "vendor_name": " â€˜AcmeÂ® "},
-        source_file="sample.txt",
-        raw_text_path="data/bronze/sample.txt",
+        source_file="sample.md",
+        raw_text_path="data/bronze/sample.md",
         text="POLITICAL CAMPAIGN CONTRIBUTION REQUEST Amount $500.00",
     )
 
@@ -232,8 +241,8 @@ def test_keyword_classification_and_string_cleaning() -> None:
     assert clean_string(" â€˜VendorÂ®  Name ") == "Vendor Name"
 
 
-def test_gold_mapping_builds_documents_and_child_tables() -> None:
-    tables = build_tables(
+def test_gold_mapping_builds_documents_table() -> None:
+    documents = build_documents_table(
         [
             {
                 "source_file": "invoice.txt",
@@ -256,11 +265,10 @@ def test_gold_mapping_builds_documents_and_child_tables() -> None:
         ]
     )
 
-    assert list(tables) == ["documents", "invoices", "contributions"]
-    assert len(tables["documents"]) == 2
-    assert len(tables["invoices"]) == 1
-    assert len(tables["contributions"]) == 1
-    assert tables["invoices"].iloc[0]["amount_due"] == 481.58
+    assert len(documents) == 2
+    assert list(documents["document_id"]) == ["invoice", "contribution"]
+    assert documents.loc[documents["document_id"] == "invoice", "total_amount"].iloc[0] is None
+    assert documents.loc[documents["document_id"] == "contribution", "amount"].iloc[0] == 200.0
 
 
 def test_gold_pipeline_writes_parquet_outputs() -> None:
@@ -285,5 +293,5 @@ def test_gold_pipeline_writes_parquet_outputs() -> None:
     run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir)
 
     assert (gold_dir / "documents.parquet").exists()
-    assert (gold_dir / "invoices.parquet").exists()
-    assert (gold_dir / "contributions.parquet").exists()
+    assert not (gold_dir / "invoices.parquet").exists()
+    assert not (gold_dir / "contributions.parquet").exists()

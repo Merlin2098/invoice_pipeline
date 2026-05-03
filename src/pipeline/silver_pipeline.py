@@ -37,7 +37,7 @@ def apply_contract_defaults(record: dict[str, Any]) -> dict[str, Any]:
 
 def load_bronze_text(bronze_dir: Path = BRONZE_DIR) -> list[dict[str, str]]:
     records = []
-    for path in sorted(bronze_dir.glob("*.txt")):
+    for path in sorted(bronze_dir.glob("*.md")):
         records.append(
             {
                 "source_file": path.name,

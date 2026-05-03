@@ -12,6 +12,20 @@ ERRORS_DIR = Path("data/errors")
 logger = logging.getLogger(__name__)
 
 
+def format_ocr_markdown(text: str, source_file: Path) -> str:
+    return f"""# OCR Extract
+
+- Source file: `{source_file.name}`
+- Source path: `{source_file.as_posix()}`
+
+## OCR Text
+
+```text
+{text}
+```
+"""
+
+
 def move_to_errors(file_path: Path, errors_dir: Path = ERRORS_DIR) -> Path:
     errors_dir.mkdir(parents=True, exist_ok=True)
     target = errors_dir / file_path.name
@@ -35,9 +49,9 @@ def run_bronze_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) 
             move_to_errors(file_path)
             continue
 
-        output_path = bronze_dir / f"{file_path.stem}.txt"
-        output_path.write_text(text, encoding="utf-8")
-        logger.info("Wrote OCR text to %s", output_path)
+        output_path = bronze_dir / f"{file_path.stem}.md"
+        output_path.write_text(format_ocr_markdown(text, file_path), encoding="utf-8")
+        logger.info("Wrote OCR markdown to %s", output_path)
 
 
 def run_ocr_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) -> None:
