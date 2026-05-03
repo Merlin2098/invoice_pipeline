@@ -9,6 +9,35 @@ contract:
     bronze: Markdown OCR files generated from raw files with pytesseract, without semantic transformation.
     silver: Structured JSON extracted from bronze OCR markdown by the local Ollama LLM.
     gold: Relational Parquet tables consolidated from silver JSON and ready for analytics.
+  extraction_v1:
+    description: >
+      Small local-model extraction only asks Ollama for total_amount,
+      document_date, and vendor_name. Python post-processing maps vendor_name
+      into vendor_or_requester and fills the remaining contract fields with null.
+    prompt_fields:
+      - total_amount
+      - document_date
+      - vendor_name
+    prompt_to_contract_mapping:
+      vendor_name: vendor_or_requester
+      total_amount: total_amount
+      document_date: document_date
+  quality_rules:
+    critical_fields:
+      - document_id
+      - source_file
+      - raw_text_path
+    measured_fields:
+      - total_amount
+      - document_date
+      - vendor_or_requester
+    advisory_flags:
+      - missing_total_amount
+      - missing_document_date
+      - missing_vendor_or_requester
+      - invalid_total_amount
+      - invalid_document_date
+      - unknown_document_type
 
 common:
   source_file:
@@ -30,7 +59,7 @@ common:
   vendor_or_requester:
     type: string
     nullable: true
-    description: Vendor, requester, supplier, agency, or organization associated with the document.
+    description: Vendor, requester, supplier, agency, or organization associated with the document; mapped from vendor_name in extraction v1.
   recipient_name:
     type: string
     nullable: true

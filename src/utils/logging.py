@@ -1,7 +1,8 @@
 import logging
-from pathlib import Path
 
-LOGS_DIR = Path("logs")
+from src.config.pipeline_config import config_path, load_pipeline_config
+
+LOGS_DIR = config_path(load_pipeline_config(), "logs_dir")
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 

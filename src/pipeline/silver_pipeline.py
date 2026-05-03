@@ -5,15 +5,21 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.config.pipeline_config import config_path, load_pipeline_config
 from src.pipeline.llm_ollama import extract_structured_data, validate_ollama_model
 from src.pipeline.postprocess import map_to_contract
 from src.utils.logging import configure_logging
 
-BRONZE_DIR = Path("data/bronze")
-SILVER_DIR = Path("data/silver")
-SILVER_ERRORS_DIR = Path("data/errors/silver")
-MAX_RETRIES = 1
-BLOCKING_FLAGS = {"invalid_json_response", "empty_llm_response", "ollama_request_failed"}
+_CONFIG = load_pipeline_config()
+BRONZE_DIR = config_path(_CONFIG, "bronze_dir")
+SILVER_DIR = config_path(_CONFIG, "silver_dir")
+SILVER_ERRORS_DIR = config_path(_CONFIG, "silver_errors_dir")
+MAX_RETRIES = int(_CONFIG["llm"]["retries"])
+BLOCKING_FLAGS = {
+    "invalid_json_response",
+    "empty_llm_response",
+    "ollama_request_failed",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,9 @@ def apply_contract_defaults(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-def load_bronze_text(bronze_dir: Path = BRONZE_DIR) -> list[dict[str, str]]:
+def load_bronze_text(
+    bronze_dir: Path = BRONZE_DIR, limit: int | None = None
+) -> list[dict[str, str]]:
     records = []
     for path in sorted(bronze_dir.glob("*.md")):
         records.append(
@@ -45,6 +53,8 @@ def load_bronze_text(bronze_dir: Path = BRONZE_DIR) -> list[dict[str, str]]:
                 "text": path.read_text(encoding="utf-8"),
             }
         )
+        if limit is not None and len(records) >= limit:
+            break
     return records
 
 
@@ -57,14 +67,20 @@ def process_with_llm(text: str, max_retries: int = MAX_RETRIES) -> dict[str, Any
         last_record = record
         if flags.isdisjoint(BLOCKING_FLAGS):
             return record
-        logger.warning("LLM extraction attempt %s failed with flags: %s", attempt + 1, sorted(flags))
+        logger.warning(
+            "LLM extraction attempt %s failed with flags: %s",
+            attempt + 1,
+            sorted(flags),
+        )
 
     return last_record
 
 
 def write_silver_output(record: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(record, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 def safe_output_stem(document_id: Any) -> str:
@@ -83,7 +99,8 @@ def run_silver_pipeline(
     errors_dir: Path = SILVER_ERRORS_DIR,
     max_retries: int = MAX_RETRIES,
     validate_model: bool = True,
-) -> None:
+    limit: int | None = None,
+) -> dict[str, object]:
     pipeline_start = time.perf_counter()
     succeeded = 0
     failed = 0
@@ -93,7 +110,7 @@ def run_silver_pipeline(
     if validate_model:
         validate_ollama_model()
 
-    bronze_records = load_bronze_text(bronze_dir)
+    bronze_records = load_bronze_text(bronze_dir, limit=limit)
     for bronze_record in bronze_records:
         start = time.perf_counter()
         source_file = bronze_record["source_file"]
@@ -128,10 +145,16 @@ def run_silver_pipeline(
         durations.append(elapsed)
         if output_dir == errors_dir:
             failed += 1
-            logger.warning("Wrote failed silver extraction to %s elapsed_seconds=%.2f", output_path, elapsed)
+            logger.warning(
+                "Wrote failed silver extraction to %s elapsed_seconds=%.2f",
+                output_path,
+                elapsed,
+            )
         else:
             succeeded += 1
-            logger.info("Wrote silver JSON to %s elapsed_seconds=%.2f", output_path, elapsed)
+            logger.info(
+                "Wrote silver JSON to %s elapsed_seconds=%.2f", output_path, elapsed
+            )
 
     total_elapsed = time.perf_counter() - pipeline_start
     total = len(bronze_records)
@@ -140,6 +163,18 @@ def run_silver_pipeline(
     min_doc_seconds = min(durations) if durations else 0
     max_doc_seconds = max(durations) if durations else 0
     docs_per_minute = succeeded / (total_elapsed / 60) if total_elapsed else 0
+    metrics = {
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "success_rate": success_rate,
+        "elapsed_seconds": total_elapsed,
+        "avg_doc_seconds": avg_doc_seconds,
+        "min_doc_seconds": min_doc_seconds,
+        "max_doc_seconds": max_doc_seconds,
+        "docs_per_minute": docs_per_minute,
+        "durations": durations,
+    }
     logger.info(
         "SILVER_METRICS total=%s succeeded=%s failed=%s success_rate=%.2f elapsed_seconds=%.2f "
         "avg_doc_seconds=%.2f min_doc_seconds=%.2f max_doc_seconds=%.2f docs_per_minute=%.2f",
@@ -153,6 +188,7 @@ def run_silver_pipeline(
         max_doc_seconds,
         docs_per_minute,
     )
+    return metrics
 
 
 if __name__ == "__main__":

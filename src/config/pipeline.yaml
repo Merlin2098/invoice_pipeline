@@ -1,0 +1,45 @@
+paths:
+  raw_dir: data/raw
+  bronze_dir: data/bronze
+  silver_dir: data/silver
+  gold_dir: data/gold
+  errors_dir: data/errors
+  silver_errors_dir: data/errors/silver
+  logs_dir: logs
+
+ocr:
+  supported_extensions:
+    - .png
+    - .jpg
+    - .jpeg
+    - .tif
+    - .tiff
+
+llm:
+  base_url: http://localhost:11434
+  model: qwen3.5:4b
+  timeout_seconds: 60
+  num_predict: 800
+  retries: 1
+  concurrency: 1
+
+quality:
+  critical_fields:
+    - document_id
+    - source_file
+    - raw_text_path
+  measured_fields:
+    - total_amount
+    - document_date
+    - vendor_or_requester
+  advisory_flags:
+    - missing_total_amount
+    - missing_document_date
+    - missing_vendor_or_requester
+    - invalid_total_amount
+    - invalid_document_date
+    - unknown_document_type
+
+stress:
+  default_limit: null
+  summary_path: logs/stress_summary.json

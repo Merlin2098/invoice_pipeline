@@ -95,12 +95,20 @@ def classify_document_type(text: str) -> str:
 def _flags(record: dict[str, Any]) -> list[str]:
     flags = record.get("ocr_confidence_flags")
     if flags is None:
-        return []
+        flags = []
     if isinstance(flags, str):
-        return [flags]
+        flags = [flags]
     if isinstance(flags, list):
         return flags
-    return ["invalid_ocr_confidence_flags"]
+    else:
+        flags = ["invalid_ocr_confidence_flags"]
+    record["ocr_confidence_flags"] = flags
+    return flags
+
+
+def add_flag(flags: list[str], flag: str) -> None:
+    if flag not in flags:
+        flags.append(flag)
 
 
 def map_to_contract(
@@ -110,7 +118,11 @@ def map_to_contract(
     raw_text_path: str,
     text: str,
 ) -> dict[str, Any]:
-    mapped = {field: None for field in contract_field_names() if field != "ocr_confidence_flags"}
+    mapped = {
+        field: None
+        for field in contract_field_names()
+        if field != "ocr_confidence_flags"
+    }
 
     document_id = Path(source_file).stem
     total_amount = normalize_amount(record.get("total_amount"))
@@ -119,15 +131,26 @@ def map_to_contract(
     flags = _flags(record)
 
     if record.get("total_amount") not in (None, "") and total_amount is None:
-        flags.append("invalid_total_amount")
+        add_flag(flags, "invalid_total_amount")
     if record.get("document_date") not in (None, "") and document_date is None:
-        flags.append("invalid_document_date")
+        add_flag(flags, "invalid_document_date")
+
+    if total_amount is None:
+        add_flag(flags, "missing_total_amount")
+    if document_date is None:
+        add_flag(flags, "missing_document_date")
+    if vendor_name is None:
+        add_flag(flags, "missing_vendor_or_requester")
+
+    document_type = classify_document_type(text)
+    if document_type == "unknown":
+        add_flag(flags, "unknown_document_type")
 
     mapped.update(
         {
             "source_file": source_file,
             "document_id": document_id,
-            "document_type": classify_document_type(text),
+            "document_type": document_type,
             "document_date": document_date,
             "vendor_or_requester": vendor_name,
             "total_amount": total_amount,

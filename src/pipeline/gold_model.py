@@ -5,13 +5,21 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from src.config.pipeline_config import config_path, load_pipeline_config
 from src.pipeline.postprocess import normalize_amount, normalize_date
 from src.utils.logging import configure_logging
 
-SILVER_DIR = Path("data/silver")
-GOLD_DIR = Path("data/gold")
+_CONFIG = load_pipeline_config()
+SILVER_DIR = config_path(_CONFIG, "silver_dir")
+GOLD_DIR = config_path(_CONFIG, "gold_dir")
 
-NUMERIC_FIELDS = ("amount", "total_amount", "tax_amount", "subtotal_amount", "amount_due")
+NUMERIC_FIELDS = (
+    "amount",
+    "total_amount",
+    "tax_amount",
+    "subtotal_amount",
+    "amount_due",
+)
 DOCUMENT_COLUMNS = (
     "document_id",
     "source_file",
@@ -59,7 +67,9 @@ def load_silver_json(silver_dir: Path = SILVER_DIR) -> list[dict[str, Any]]:
             continue
 
         record.setdefault("source_file", f"{path.stem}.md")
-        record.setdefault("raw_text_path", Path("data/bronze", f"{path.stem}.md").as_posix())
+        record.setdefault(
+            "raw_text_path", Path("data/bronze", f"{path.stem}.md").as_posix()
+        )
         record.setdefault("document_id", path.stem)
         records.append(record)
 
@@ -98,18 +108,23 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
     record["document_date"] = normalized_date
     record["currency"] = normalize_currency(record)
 
-    for field in ("document_id", "source_file", "document_type"):
+    for field in ("document_id", "source_file", "raw_text_path", "document_type"):
         if not record.get(field):
             add_flag(record, f"missing_{field}")
-            logger.warning("Missing critical field %s in record %s", field, record.get("source_file"))
+            logger.warning(
+                "Missing critical field %s in record %s",
+                field,
+                record.get("source_file"),
+            )
 
-    if record.get("document_type") in {"invoice", "contribution"}:
-        if record.get("amount") is None and record.get("total_amount") is None:
-            add_flag(record, "missing_main_amount")
-            logger.warning("Missing amount fields in record %s", record.get("source_file"))
-        if record.get("document_date") is None:
-            add_flag(record, "missing_document_date")
-            logger.warning("Missing document date in record %s", record.get("source_file"))
+    if record.get("total_amount") is None:
+        add_flag(record, "missing_total_amount")
+    if record.get("document_date") is None:
+        add_flag(record, "missing_document_date")
+    if record.get("vendor_or_requester") is None:
+        add_flag(record, "missing_vendor_or_requester")
+    if record.get("document_type") == "unknown":
+        add_flag(record, "unknown_document_type")
 
     return record
 
@@ -174,16 +189,31 @@ def write_outputs(documents: pd.DataFrame, gold_dir: Path = GOLD_DIR) -> None:
     logger.info("Wrote gold documents table to %s", output_path)
 
 
-def log_gold_metrics(documents: pd.DataFrame, elapsed: float) -> None:
+def log_gold_metrics(documents: pd.DataFrame, elapsed: float) -> dict[str, Any]:
     total = len(documents)
     if total == 0:
         logger.info("GOLD_METRICS rows=0 elapsed_seconds=%.2f", elapsed)
-        return
+        return {
+            "rows": 0,
+            "elapsed_seconds": elapsed,
+            "amount_completion_rate": 0,
+            "date_completion_rate": 0,
+            "vendor_completion_rate": 0,
+            "document_type_counts": {},
+        }
 
     complete_amount = int(documents["total_amount"].notna().sum())
     complete_date = int(documents["document_date"].notna().sum())
     complete_vendor = int(documents["vendor_or_requester"].notna().sum())
     type_counts = documents["document_type"].value_counts(dropna=False).to_dict()
+    metrics = {
+        "rows": total,
+        "elapsed_seconds": elapsed,
+        "amount_completion_rate": complete_amount / total,
+        "date_completion_rate": complete_date / total,
+        "vendor_completion_rate": complete_vendor / total,
+        "document_type_counts": type_counts,
+    }
     logger.info(
         "GOLD_METRICS rows=%s elapsed_seconds=%.2f amount_completion_rate=%.2f "
         "date_completion_rate=%.2f vendor_completion_rate=%.2f document_type_counts=%s",
@@ -194,14 +224,17 @@ def log_gold_metrics(documents: pd.DataFrame, elapsed: float) -> None:
         complete_vendor / total,
         type_counts,
     )
+    return metrics
 
 
-def run_gold_pipeline(silver_dir: Path = SILVER_DIR, gold_dir: Path = GOLD_DIR) -> None:
+def run_gold_pipeline(
+    silver_dir: Path = SILVER_DIR, gold_dir: Path = GOLD_DIR
+) -> dict[str, Any]:
     start = time.perf_counter()
     records = load_silver_json(silver_dir)
     documents = build_documents_table(records)
     write_outputs(documents, gold_dir)
-    log_gold_metrics(documents, time.perf_counter() - start)
+    return log_gold_metrics(documents, time.perf_counter() - start)
 
 
 if __name__ == "__main__":

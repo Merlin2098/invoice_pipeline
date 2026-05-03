@@ -7,14 +7,30 @@ import yaml
 from PIL import Image
 
 import run_pipeline
+from scripts import stress_pipeline
+from src.config.pipeline_config import load_pipeline_config
 from src.pipeline import llm_ollama
 from src.pipeline.bronze_pipeline import format_ocr_markdown, run_bronze_pipeline
-from src.pipeline.gold_model import build_documents_table, normalize_amount, normalize_date, run_gold_pipeline
-from src.pipeline.llm_ollama import MODEL_NAME, MINIMAL_EXTRACTION_SCHEMA, build_ollama_payload, validate_ollama_model
+from src.pipeline.gold_model import (
+    build_documents_table,
+    normalize_amount,
+    normalize_date,
+    run_gold_pipeline,
+)
+from src.pipeline.llm_ollama import (
+    MODEL_NAME,
+    MINIMAL_EXTRACTION_SCHEMA,
+    build_ollama_payload,
+)
 from src.pipeline.ocr import clean_text, ocr_extract
-from src.pipeline.postprocess import classify_document_type, clean_string, map_to_contract
+from src.pipeline.postprocess import (
+    classify_document_type,
+    clean_string,
+    map_to_contract,
+)
 from src.pipeline.silver_pipeline import process_with_llm
 from src.pipeline.silver_pipeline import run_silver_pipeline
+from src.services import llm_service
 from src.utils import logging as pipeline_logging
 
 
@@ -30,14 +46,46 @@ def clean_test_dir(name: str) -> Path:
 
 
 def test_data_contract_contains_required_groups() -> None:
-    contract = yaml.safe_load(Path("src/config/data_contract.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        Path("src/config/data_contract.yaml").read_text(encoding="utf-8")
+    )
 
     assert {"common", "invoice", "contribution"}.issubset(contract)
-    assert "Original source files loaded into data/raw" in contract["contract"]["medallion_layers"]["raw"]
-    assert "Markdown OCR files generated from raw files" in contract["contract"]["medallion_layers"]["bronze"]
+    assert (
+        "Original source files loaded into data/raw"
+        in contract["contract"]["medallion_layers"]["raw"]
+    )
+    assert (
+        "Markdown OCR files generated from raw files"
+        in contract["contract"]["medallion_layers"]["bronze"]
+    )
+    assert contract["contract"]["extraction_v1"]["prompt_fields"] == [
+        "total_amount",
+        "document_date",
+        "vendor_name",
+    ]
+    assert contract["contract"]["quality_rules"]["measured_fields"] == [
+        "total_amount",
+        "document_date",
+        "vendor_or_requester",
+    ]
     assert contract["common"]["document_id"]["nullable"] is False
     assert contract["invoice"]["amount_due"]["type"] == "float"
     assert contract["contribution"]["party"]["type"] == "string"
+
+
+def test_pipeline_config_loads_defaults() -> None:
+    config = load_pipeline_config()
+
+    assert config["llm"]["model"] == "qwen3.5:4b"
+    assert config["llm"]["timeout_seconds"] == 60
+    assert config["llm"]["retries"] == 1
+    assert config["llm"]["concurrency"] == 1
+    assert config["quality"]["measured_fields"] == [
+        "total_amount",
+        "document_date",
+        "vendor_or_requester",
+    ]
 
 
 def test_raw_to_bronze_ocr_helpers_support_tif(monkeypatch) -> None:
@@ -45,7 +93,9 @@ def test_raw_to_bronze_ocr_helpers_support_tif(monkeypatch) -> None:
     image_path = test_dir / "sample.tif"
     Image.new("RGB", (10, 10), color="white").save(image_path)
 
-    monkeypatch.setattr("src.pipeline.ocr.pytesseract.image_to_string", lambda image: " A \n\n B ")
+    monkeypatch.setattr(
+        "src.pipeline.ocr.pytesseract.image_to_string", lambda image: " A \n\n B "
+    )
 
     assert clean_text(" A \n\n B ") == "A\nB"
     assert ocr_extract(image_path) == "A\nB"
@@ -58,7 +108,9 @@ def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch, caplog) -> Non
     raw_dir.mkdir()
     (raw_dir / "invoice.tif").write_text("fake image bytes", encoding="utf-8")
 
-    monkeypatch.setattr("src.pipeline.bronze_pipeline.ocr_extract", lambda path: f"OCR for {path.stem}")
+    monkeypatch.setattr(
+        "src.pipeline.bronze_pipeline.ocr_extract", lambda path: f"OCR for {path.stem}"
+    )
 
     with caplog.at_level(logging.INFO):
         run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
@@ -79,8 +131,12 @@ def test_ocr_markdown_includes_source_metadata() -> None:
 def test_root_pipeline_runs_phases_in_order(monkeypatch) -> None:
     calls = []
 
-    monkeypatch.setattr(run_pipeline, "run_bronze_pipeline", lambda: calls.append("bronze"))
-    monkeypatch.setattr(run_pipeline, "run_silver_pipeline", lambda: calls.append("silver"))
+    monkeypatch.setattr(
+        run_pipeline, "run_bronze_pipeline", lambda: calls.append("bronze")
+    )
+    monkeypatch.setattr(
+        run_pipeline, "run_silver_pipeline", lambda: calls.append("silver")
+    )
     monkeypatch.setattr(run_pipeline, "run_gold_pipeline", lambda: calls.append("gold"))
 
     run_pipeline.run_pipeline()
@@ -102,11 +158,17 @@ def test_configure_logging_writes_to_logs_dir(monkeypatch) -> None:
 def test_parse_json_response_handles_common_shapes() -> None:
     assert llm_ollama.parse_json_response('{"total_amount": 10}')["total_amount"] == 10
     assert (
-        llm_ollama.parse_json_response('```json\n{"vendor_name": "Acme"}\n``` trailing text')["vendor_name"]
+        llm_ollama.parse_json_response(
+            '```json\n{"vendor_name": "Acme"}\n``` trailing text'
+        )["vendor_name"]
         == "Acme"
     )
-    assert llm_ollama.parse_json_response("")["ocr_confidence_flags"] == ["empty_llm_response"]
-    assert llm_ollama.parse_json_response("not json")["ocr_confidence_flags"] == ["invalid_json_response"]
+    assert llm_ollama.parse_json_response("")["ocr_confidence_flags"] == [
+        "empty_llm_response"
+    ]
+    assert llm_ollama.parse_json_response("not json")["ocr_confidence_flags"] == [
+        "invalid_json_response"
+    ]
 
 
 def test_ollama_defaults_to_available_text_extraction_model() -> None:
@@ -125,14 +187,43 @@ def test_ollama_payload_forces_json_and_bounded_output() -> None:
 
 
 def test_validate_ollama_model_fails_fast_for_missing_model(monkeypatch) -> None:
-    monkeypatch.setattr("src.pipeline.llm_ollama.list_available_models", lambda: ["deepseek-r1:8b"])
+    monkeypatch.setattr(
+        "src.services.llm_service.list_available_models", lambda: ["deepseek-r1:8b"]
+    )
 
     try:
-        validate_ollama_model("qwen3.5:4b")
+        llm_service.validate_ollama_model("qwen3.5:4b")
     except RuntimeError as exc:
         assert "Available models: deepseek-r1:8b" in str(exc)
     else:
         raise AssertionError("Expected missing Ollama model to fail fast")
+
+
+def test_llm_service_call_ollama_uses_mocked_requests(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "response": '{"total_amount": 10, "document_date": null, "vendor_name": "Acme"}'
+            }
+
+    def fake_post(url: str, json: dict, timeout: int) -> FakeResponse:
+        captured["url"] = url
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("src.services.llm_service.requests.post", fake_post)
+
+    response = llm_service.call_ollama("OCR", timeout=12)
+
+    assert response.startswith('{"total_amount"')
+    assert captured["timeout"] == 12
+    assert captured["json"]["format"] == MINIMAL_EXTRACTION_SCHEMA
 
 
 def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
@@ -140,15 +231,29 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     bronze_dir = test_dir / "bronze"
     silver_dir = test_dir / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "sample.md").write_text("# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8")
+    (bronze_dir / "sample.md").write_text(
+        "# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8"
+    )
 
     def fake_extract(text: str) -> dict:
         assert "TOTAL" in text
-        return {"total_amount": "$10.00", "document_date": None, "vendor_name": "Acme", "ocr_confidence_flags": []}
+        return {
+            "total_amount": "$10.00",
+            "document_date": None,
+            "vendor_name": "Acme",
+            "ocr_confidence_flags": [],
+        }
 
-    monkeypatch.setattr("src.pipeline.silver_pipeline.extract_structured_data", fake_extract)
+    monkeypatch.setattr(
+        "src.pipeline.silver_pipeline.extract_structured_data", fake_extract
+    )
 
-    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
+    run_silver_pipeline(
+        bronze_dir=bronze_dir,
+        silver_dir=silver_dir,
+        max_retries=0,
+        validate_model=False,
+    )
 
     output = json.loads((silver_dir / "sample.json").read_text(encoding="utf-8"))
     assert output["source_file"] == "sample.md"
@@ -165,15 +270,26 @@ def test_silver_pipeline_logs_success_metrics(monkeypatch, caplog) -> None:
     bronze_dir = test_dir / "bronze"
     silver_dir = test_dir / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "sample.md").write_text("# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8")
+    (bronze_dir / "sample.md").write_text(
+        "# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8"
+    )
 
     monkeypatch.setattr(
         "src.pipeline.silver_pipeline.extract_structured_data",
-        lambda text: {"total_amount": "$10.00", "document_date": None, "vendor_name": "Acme"},
+        lambda text: {
+            "total_amount": "$10.00",
+            "document_date": None,
+            "vendor_name": "Acme",
+        },
     )
 
     with caplog.at_level(logging.INFO):
-        run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
+        run_silver_pipeline(
+            bronze_dir=bronze_dir,
+            silver_dir=silver_dir,
+            max_retries=0,
+            validate_model=False,
+        )
 
     assert "SILVER_METRICS total=1 succeeded=1 failed=0" in caplog.text
 
@@ -208,14 +324,21 @@ def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:
     bronze_dir = test_dir / "bronze"
     silver_dir = test_dir / "silver"
     bronze_dir.mkdir()
-    (bronze_dir / "source_name.md").write_text("POLITICAL CAMPAIGN CONTRIBUTION REQUEST", encoding="utf-8")
+    (bronze_dir / "source_name.md").write_text(
+        "POLITICAL CAMPAIGN CONTRIBUTION REQUEST", encoding="utf-8"
+    )
 
     monkeypatch.setattr(
         "src.pipeline.silver_pipeline.extract_structured_data",
         lambda text: {"total_amount": None, "document_date": None, "vendor_name": None},
     )
 
-    run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
+    run_silver_pipeline(
+        bronze_dir=bronze_dir,
+        silver_dir=silver_dir,
+        max_retries=0,
+        validate_model=False,
+    )
 
     assert (silver_dir / "source_name.json").exists()
 
@@ -226,7 +349,10 @@ def test_process_with_llm_retries_invalid_json(monkeypatch) -> None:
         {"document_type": "invoice", "ocr_confidence_flags": []},
     ]
 
-    monkeypatch.setattr("src.pipeline.silver_pipeline.extract_structured_data", lambda text: responses.pop(0))
+    monkeypatch.setattr(
+        "src.pipeline.silver_pipeline.extract_structured_data",
+        lambda text: responses.pop(0),
+    )
 
     assert process_with_llm("INVOICE", max_retries=2)["document_type"] == "invoice"
 
@@ -239,7 +365,11 @@ def test_normalizers_handle_ocr_noise() -> None:
 
 def test_postprocess_maps_minimal_extraction_to_contract() -> None:
     mapped = map_to_contract(
-        {"total_amount": "$500.00", "document_date": "9/26/97", "vendor_name": " â€˜AcmeÂ® "},
+        {
+            "total_amount": "$500.00",
+            "document_date": "9/26/97",
+            "vendor_name": " â€˜AcmeÂ® ",
+        },
         source_file="sample.md",
         raw_text_path="data/bronze/sample.md",
         text="POLITICAL CAMPAIGN CONTRIBUTION REQUEST Amount $500.00",
@@ -254,9 +384,26 @@ def test_postprocess_maps_minimal_extraction_to_contract() -> None:
     assert mapped["vendor_or_requester"] == "Acme"
 
 
+def test_postprocess_adds_quality_flags_for_missing_prompt_fields() -> None:
+    mapped = map_to_contract(
+        {"total_amount": None, "document_date": None, "vendor_name": None},
+        source_file="sample.md",
+        raw_text_path="data/bronze/sample.md",
+        text="plain memo",
+    )
+
+    assert "missing_total_amount" in mapped["ocr_confidence_flags"]
+    assert "missing_document_date" in mapped["ocr_confidence_flags"]
+    assert "missing_vendor_or_requester" in mapped["ocr_confidence_flags"]
+    assert "unknown_document_type" in mapped["ocr_confidence_flags"]
+
+
 def test_keyword_classification_and_string_cleaning() -> None:
     assert classify_document_type("INVOICE TOTAL") == "invoice"
-    assert classify_document_type("POLITICAL CAMPAIGN CONTRIBUTION REQUEST") == "contribution"
+    assert (
+        classify_document_type("POLITICAL CAMPAIGN CONTRIBUTION REQUEST")
+        == "contribution"
+    )
     assert classify_document_type("plain memo") == "unknown"
     assert clean_string(" â€˜VendorÂ®  Name ") == "Vendor Name"
 
@@ -287,8 +434,14 @@ def test_gold_mapping_builds_documents_table() -> None:
 
     assert len(documents) == 2
     assert list(documents["document_id"]) == ["invoice", "contribution"]
-    assert documents.loc[documents["document_id"] == "invoice", "total_amount"].iloc[0] is None
-    assert documents.loc[documents["document_id"] == "contribution", "amount"].iloc[0] == 200.0
+    assert (
+        documents.loc[documents["document_id"] == "invoice", "total_amount"].iloc[0]
+        is None
+    )
+    assert (
+        documents.loc[documents["document_id"] == "contribution", "amount"].iloc[0]
+        == 200.0
+    )
 
 
 def test_gold_pipeline_writes_parquet_outputs() -> None:
@@ -342,3 +495,80 @@ def test_gold_pipeline_logs_completion_metrics(caplog) -> None:
 
     assert "GOLD_METRICS rows=1" in caplog.text
     assert "amount_completion_rate=1.00" in caplog.text
+
+
+def test_stress_pipeline_writes_summary(monkeypatch) -> None:
+    test_dir = clean_test_dir("stress_pipeline")
+    silver_dir = test_dir / "silver"
+    gold_dir = test_dir / "gold"
+    logs_dir = test_dir / "logs"
+    silver_dir.mkdir()
+    gold_dir.mkdir()
+    (silver_dir / "sample.json").write_text(
+        json.dumps(
+            {
+                "total_amount": 10.0,
+                "document_date": "1998-09-11",
+                "vendor_or_requester": "Acme",
+                "ocr_confidence_flags": ["unknown_document_type"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd = __import__("pandas")
+    pd.DataFrame([{"document_id": "sample"}]).to_parquet(
+        gold_dir / "documents.parquet", index=False
+    )
+
+    monkeypatch.setattr(
+        stress_pipeline,
+        "load_pipeline_config",
+        lambda: {
+            "paths": {
+                "raw_dir": str(test_dir / "raw"),
+                "bronze_dir": str(test_dir / "bronze"),
+                "silver_dir": str(silver_dir),
+                "gold_dir": str(gold_dir),
+                "errors_dir": str(test_dir / "errors"),
+                "silver_errors_dir": str(test_dir / "errors" / "silver"),
+                "logs_dir": str(logs_dir),
+            },
+            "stress": {"summary_path": str(logs_dir / "stress_summary.json")},
+        },
+    )
+    monkeypatch.setattr(
+        stress_pipeline,
+        "run_bronze_pipeline",
+        lambda *args, **kwargs: {
+            "total": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "success_rate": 1,
+            "elapsed_seconds": 0.1,
+            "durations": [0.1],
+        },
+    )
+    monkeypatch.setattr(
+        stress_pipeline,
+        "run_silver_pipeline",
+        lambda *args, **kwargs: {
+            "total": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "success_rate": 1,
+            "elapsed_seconds": 0.2,
+            "durations": [0.2],
+        },
+    )
+    monkeypatch.setattr(
+        stress_pipeline, "run_gold_pipeline", lambda *args, **kwargs: {"rows": 1}
+    )
+
+    summary = stress_pipeline.run_stress_pipeline(limit=100)
+
+    assert summary["limit"] == 100
+    assert summary["phase_metrics"]["bronze"]["succeeded"] == 1
+    assert summary["doc_latency_stats"]["silver"]["p95"] == 0.2
+    assert summary["silver_quality"]["completion_rates"]["total_amount"] == 1
+    assert summary["silver_quality"]["flag_counts"]["unknown_document_type"] == 1
+    assert (logs_dir / "stress_summary.json").exists()
