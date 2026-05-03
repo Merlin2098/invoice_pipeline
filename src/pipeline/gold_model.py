@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -173,10 +174,34 @@ def write_outputs(documents: pd.DataFrame, gold_dir: Path = GOLD_DIR) -> None:
     logger.info("Wrote gold documents table to %s", output_path)
 
 
+def log_gold_metrics(documents: pd.DataFrame, elapsed: float) -> None:
+    total = len(documents)
+    if total == 0:
+        logger.info("GOLD_METRICS rows=0 elapsed_seconds=%.2f", elapsed)
+        return
+
+    complete_amount = int(documents["total_amount"].notna().sum())
+    complete_date = int(documents["document_date"].notna().sum())
+    complete_vendor = int(documents["vendor_or_requester"].notna().sum())
+    type_counts = documents["document_type"].value_counts(dropna=False).to_dict()
+    logger.info(
+        "GOLD_METRICS rows=%s elapsed_seconds=%.2f amount_completion_rate=%.2f "
+        "date_completion_rate=%.2f vendor_completion_rate=%.2f document_type_counts=%s",
+        total,
+        elapsed,
+        complete_amount / total,
+        complete_date / total,
+        complete_vendor / total,
+        type_counts,
+    )
+
+
 def run_gold_pipeline(silver_dir: Path = SILVER_DIR, gold_dir: Path = GOLD_DIR) -> None:
+    start = time.perf_counter()
     records = load_silver_json(silver_dir)
     documents = build_documents_table(records)
     write_outputs(documents, gold_dir)
+    log_gold_metrics(documents, time.perf_counter() - start)
 
 
 if __name__ == "__main__":

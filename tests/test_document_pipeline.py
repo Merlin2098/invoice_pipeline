@@ -51,7 +51,7 @@ def test_raw_to_bronze_ocr_helpers_support_tif(monkeypatch) -> None:
     assert ocr_extract(image_path) == "A\nB"
 
 
-def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch) -> None:
+def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch, caplog) -> None:
     test_dir = clean_test_dir("bronze_pipeline")
     raw_dir = test_dir / "raw"
     bronze_dir = test_dir / "bronze"
@@ -60,11 +60,13 @@ def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch) -> None:
 
     monkeypatch.setattr("src.pipeline.bronze_pipeline.ocr_extract", lambda path: f"OCR for {path.stem}")
 
-    run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
+    with caplog.at_level(logging.INFO):
+        run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
 
     output = (bronze_dir / "invoice.md").read_text(encoding="utf-8")
     assert "# OCR Extract" in output
     assert "OCR for invoice" in output
+    assert "BRONZE_METRICS total=1 succeeded=1 failed=0" in caplog.text
 
 
 def test_ocr_markdown_includes_source_metadata() -> None:
@@ -156,6 +158,24 @@ def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
     assert output["total_amount"] == 10.0
     assert output["recipient_name"] is None
     assert output["raw_text_path"].endswith("sample.md")
+
+
+def test_silver_pipeline_logs_success_metrics(monkeypatch, caplog) -> None:
+    test_dir = clean_test_dir("silver_pipeline_metrics")
+    bronze_dir = test_dir / "bronze"
+    silver_dir = test_dir / "silver"
+    bronze_dir.mkdir()
+    (bronze_dir / "sample.md").write_text("# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "src.pipeline.silver_pipeline.extract_structured_data",
+        lambda text: {"total_amount": "$10.00", "document_date": None, "vendor_name": "Acme"},
+    )
+
+    with caplog.at_level(logging.INFO):
+        run_silver_pipeline(bronze_dir=bronze_dir, silver_dir=silver_dir, max_retries=0, validate_model=False)
+
+    assert "SILVER_METRICS total=1 succeeded=1 failed=0" in caplog.text
 
 
 def test_silver_pipeline_writes_failed_extraction_to_errors(monkeypatch) -> None:
@@ -295,3 +315,30 @@ def test_gold_pipeline_writes_parquet_outputs() -> None:
     assert (gold_dir / "documents.parquet").exists()
     assert not (gold_dir / "invoices.parquet").exists()
     assert not (gold_dir / "contributions.parquet").exists()
+
+
+def test_gold_pipeline_logs_completion_metrics(caplog) -> None:
+    test_dir = clean_test_dir("gold_pipeline_metrics")
+    silver_dir = test_dir / "silver"
+    gold_dir = test_dir / "gold"
+    silver_dir.mkdir()
+    (silver_dir / "invoice.json").write_text(
+        json.dumps(
+            {
+                "source_file": "invoice.md",
+                "document_type": "invoice",
+                "document_id": "invoice",
+                "document_date": "1994-05-13",
+                "total_amount": 12.34,
+                "vendor_or_requester": "Acme",
+                "ocr_confidence_flags": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.INFO):
+        run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir)
+
+    assert "GOLD_METRICS rows=1" in caplog.text
+    assert "amount_completion_rate=1.00" in caplog.text

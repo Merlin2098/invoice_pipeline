@@ -1,5 +1,6 @@
 import logging
 import shutil
+import time
 from pathlib import Path
 
 from src.pipeline.ocr import ocr_extract
@@ -39,6 +40,9 @@ def move_to_errors(file_path: Path, errors_dir: Path = ERRORS_DIR) -> Path:
 
 
 def run_bronze_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) -> None:
+    start = time.perf_counter()
+    processed = 0
+    failed = 0
     bronze_dir.mkdir(parents=True, exist_ok=True)
 
     for file_path in sorted(raw_dir.glob("*.tif")):
@@ -47,11 +51,27 @@ def run_bronze_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) 
         except Exception:
             logger.exception("OCR failed for %s", file_path)
             move_to_errors(file_path)
+            failed += 1
             continue
 
         output_path = bronze_dir / f"{file_path.stem}.md"
         output_path.write_text(format_ocr_markdown(text, file_path), encoding="utf-8")
+        processed += 1
         logger.info("Wrote OCR markdown to %s", output_path)
+
+    elapsed = time.perf_counter() - start
+    total = processed + failed
+    rate = processed / elapsed if elapsed else 0
+    success_rate = processed / total if total else 0
+    logger.info(
+        "BRONZE_METRICS total=%s succeeded=%s failed=%s success_rate=%.2f elapsed_seconds=%.2f docs_per_second=%.2f",
+        total,
+        processed,
+        failed,
+        success_rate,
+        elapsed,
+        rate,
+    )
 
 
 def run_ocr_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) -> None:

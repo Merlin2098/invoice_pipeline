@@ -84,12 +84,17 @@ def run_silver_pipeline(
     max_retries: int = MAX_RETRIES,
     validate_model: bool = True,
 ) -> None:
+    pipeline_start = time.perf_counter()
+    succeeded = 0
+    failed = 0
+    durations: list[float] = []
     silver_dir.mkdir(parents=True, exist_ok=True)
     errors_dir.mkdir(parents=True, exist_ok=True)
     if validate_model:
         validate_ollama_model()
 
-    for bronze_record in load_bronze_text(bronze_dir):
+    bronze_records = load_bronze_text(bronze_dir)
+    for bronze_record in bronze_records:
         start = time.perf_counter()
         source_file = bronze_record["source_file"]
         logger.info(
@@ -120,10 +125,34 @@ def run_silver_pipeline(
         output_path = output_dir / f"{safe_output_stem(record['document_id'])}.json"
         write_silver_output(record, output_path)
         elapsed = time.perf_counter() - start
+        durations.append(elapsed)
         if output_dir == errors_dir:
+            failed += 1
             logger.warning("Wrote failed silver extraction to %s elapsed_seconds=%.2f", output_path, elapsed)
         else:
+            succeeded += 1
             logger.info("Wrote silver JSON to %s elapsed_seconds=%.2f", output_path, elapsed)
+
+    total_elapsed = time.perf_counter() - pipeline_start
+    total = len(bronze_records)
+    success_rate = succeeded / total if total else 0
+    avg_doc_seconds = sum(durations) / len(durations) if durations else 0
+    min_doc_seconds = min(durations) if durations else 0
+    max_doc_seconds = max(durations) if durations else 0
+    docs_per_minute = succeeded / (total_elapsed / 60) if total_elapsed else 0
+    logger.info(
+        "SILVER_METRICS total=%s succeeded=%s failed=%s success_rate=%.2f elapsed_seconds=%.2f "
+        "avg_doc_seconds=%.2f min_doc_seconds=%.2f max_doc_seconds=%.2f docs_per_minute=%.2f",
+        total,
+        succeeded,
+        failed,
+        success_rate,
+        total_elapsed,
+        avg_doc_seconds,
+        min_doc_seconds,
+        max_doc_seconds,
+        docs_per_minute,
+    )
 
 
 if __name__ == "__main__":
