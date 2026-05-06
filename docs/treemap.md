@@ -1,8 +1,9 @@
 ```text
 invoice_pipeline/
 |-- docs/
-|   |-- modelos.png
-|   `-- sistema.png
+|   |-- aws_target_architecture.md
+|   |-- mvp_local_ollama_hallazgos.md
+|   `-- treemap.md
 |-- infra/
 |   |-- env/
 |   |-- main.tf
