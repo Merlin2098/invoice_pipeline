@@ -1,40 +1,8 @@
 ```text
 invoice_pipeline/
-|-- data/
-|   |-- errors/
-|   |-- gold/
-|   |-- raw/
-|   |   |-- ti16400455.tif
-|   |   |-- ti16400529.tif
-|   |   |-- ti16570064.tif
-|   |   |-- ti16790037.tif
-|   |   |-- ti16801265.tif
-|   |   |-- ti16801308.tif
-|   |   |-- ti16801315.tif
-|   |   |-- ti16801581.tif
-|   |   |-- ti17120055.tif
-|   |   |-- ti17120087.tif
-|   |   |-- ti17120111.tif
-|   |   |-- ti17120119.tif
-|   |   |-- ti17120311.tif
-|   |   |-- ti17120319.tif
-|   |   |-- ti17120363.tif
-|   |   |-- ti17120467.tif
-|   |   |-- ti17120471.tif
-|   |   |-- ti17120567.tif
-|   |   |-- ti17120867.tif
-|   |   |-- ti17120999.tif
-|   |   |-- ti31379007_9013.tif
-|   |   |-- ti31689049.tif
-|   |   |-- ti31689101.tif
-|   |   |-- ti31689124.tif
-|   |   |-- ti31689185.tif
-|   |   |-- tob02910.28_tob02910.29.tif
-|   |   |-- tob03018.62.tif
-|   |   |-- tob04705.73_tob04705.76.tif
-|   |   |-- tob04705.77.tif
-|   |   `-- tob04705.80.tif
-|   `-- silver/
+|-- docs/
+|   |-- modelos.png
+|   `-- sistema.png
 |-- infra/
 |   |-- env/
 |   |-- main.tf
@@ -43,16 +11,53 @@ invoice_pipeline/
 |   |-- terraform.tfvars.example
 |   `-- variables.tf
 |-- scripts/
-|   |-- ai_refresh.py
+|   |-- hooks/
+|   |   |-- ai_refresh.py
+|   |   `-- sync_dependencies.py
+|   |-- testing/
+|   |   |-- run_pytest.py
+|   |   |-- run_ruff_check.py
+|   |   `-- run_ruff_format.py
+|   |-- windows/
+|   |   |-- run_make.ps1
+|   |   |-- setup_env.ps1
+|   |   `-- update_venv.ps1
 |   |-- generate_treemap.py
 |   |-- package.py
-|   `-- sync_requirements.py
+|   |-- run_pip_init.py
+|   `-- run_uv_sync.py
 |-- src/
 |   |-- config/
+|   |   |-- __init__.py
+|   |   |-- data_contract.yaml
+|   |   |-- pipeline.yaml
+|   |   `-- pipeline_config.py
 |   |-- pipeline/
+|   |   |-- __init__.py
+|   |   |-- bronze_pipeline.py
+|   |   |-- gold_model.py
+|   |   |-- llm_ollama.py
+|   |   |-- ocr.py
+|   |   |-- postprocess.py
+|   |   `-- silver_pipeline.py
+|   |-- services/
+|   |   |-- __init__.py
+|   |   |-- llm_service.py
+|   |   `-- ocr_service.py
+|   |-- utils/
+|   |   |-- __init__.py
+|   |   `-- logging.py
 |   `-- __init__.py
 |-- tests/
-|   `-- test_example_job.py
+|   |-- test_document_pipeline.py
+|   |-- test_example_job.py
+|   `-- test_olama.py
+|-- .gitattributes
 |-- .pre-commit-config.yaml
-`-- requirements.txt
+|-- .template-profile
+|-- AGENTS.md
+|-- Makefile
+|-- pyproject.toml
+|-- run_pipeline.py
+`-- uv.lock
 ```

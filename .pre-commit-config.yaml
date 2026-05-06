@@ -1,31 +1,32 @@
 repos:
   - repo: local
     hooks:
-      - id: ai-refresh-light
-        name: AI refresh (light)
-        entry: python scripts/ai_refresh.py --light
-        language: system
+      - id: ai-refresh
+        name: AI refresh
+        entry: python scripts/hooks/ai_refresh.py
+        language: python
+        additional_dependencies:
+          - pyyaml
         pass_filenames: false
         stages: [pre-commit]
-      - id: ruff-format
-        name: ruff format
-        entry: ./.venv/Scripts/python.exe -m ruff format ai src tests scripts
-        language: system
-        pass_filenames: false
       - id: ruff-lint
         name: ruff lint
-        entry: ./.venv/Scripts/python.exe -m ruff check ai src tests scripts
-        language: system
+        entry: python scripts/testing/run_ruff_check.py
+        language: python
+        additional_dependencies:
+          - ruff
         pass_filenames: false
+        stages: [manual]
       - id: pytest
         name: pytest
-        entry: ./.venv/Scripts/python.exe -m pytest
+        entry: python scripts/testing/run_pytest.py
         language: system
         pass_filenames: false
         stages: [manual]
-      - id: sync-requirements
+      - id: sync-dependencies
         name: Sync virtual environment dependencies
-        entry: ./.venv/Scripts/python.exe scripts/sync_requirements.py
+        entry: python scripts/hooks/sync_dependencies.py
         language: system
-        files: ^requirements\.txt$
+        args: [--manager, uv]
+        files: ^(requirements(?:\.[A-Za-z0-9_-]+)?\.txt|pyproject\.toml|uv\.lock|\.template-profile)$
         pass_filenames: false

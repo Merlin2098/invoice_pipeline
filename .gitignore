@@ -13,13 +13,14 @@ venv/
 # Python tooling caches
 .mypy_cache/
 .pytest_cache/
-.ruff_cache/
 pytest-cache-files-*/
-data/test_tmp/
+.pytest-tmp/
+.ruff_cache/
 
 # Build / packaging
 build/
 dist/
+spec/
 
 # =========================
 # 🧪 Logs & runtime artifacts
@@ -71,9 +72,5 @@ crash.log
 Thumbs.db
 
 .ai/
-
-# Local template helper files
-ai/
-AGENTS.md
-Makefile
 data/
+ai/
