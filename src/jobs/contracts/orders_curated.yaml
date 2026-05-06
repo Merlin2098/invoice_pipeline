@@ -1,0 +1,8 @@
+dataset: curated.orders
+primary_key:
+  - order_id
+columns:
+  - order_id
+  - customer_id
+  - order_total
+  - order_date

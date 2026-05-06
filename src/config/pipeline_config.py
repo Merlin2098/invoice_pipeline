@@ -7,14 +7,24 @@ import yaml
 PIPELINE_CONFIG_PATH = Path("src/config/pipeline.yaml")
 
 DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
+    "execution_mode": "local",
     "paths": {
         "raw_dir": "data/raw",
         "bronze_dir": "data/bronze",
         "silver_dir": "data/silver",
+        "silver_valid_dir": "data/silver/valid",
+        "silver_rejected_dir": "data/silver/rejected",
         "gold_dir": "data/gold",
         "errors_dir": "data/errors",
-        "silver_errors_dir": "data/errors/silver",
+        "silver_failed_dir": "data/errors/silver_failed",
+        "metrics_dir": "logs/runs",
         "logs_dir": "logs",
+    },
+    "run": {
+        "id_prefix": "invoice-pipeline",
+        "manifest_dir": "logs/runs",
+        "reference_manifest_path": "tests/fixtures/reference_documents.yaml",
+        "retention_days": 30,
     },
     "ocr": {
         "supported_extensions": [".png", ".jpg", ".jpeg", ".tif", ".tiff"],
@@ -27,17 +37,52 @@ DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
         "retries": 1,
         "concurrency": 1,
     },
+    "aws": {
+        "region": "us-east-1",
+        "bucket": None,
+        "artifact_bucket": None,
+        "raw_prefix": "raw",
+        "bronze_prefix": "bronze/textract-json",
+        "silver_valid_prefix": "silver/valid",
+        "silver_rejected_prefix": "silver/rejected",
+        "gold_prefix": "gold/documents",
+        "metrics_prefix": "metrics",
+        "textract_feature_type": "AnalyzeExpense",
+        "bedrock_model_id": "bedrock-model-id",
+        "bedrock_enabled": True,
+        "step_functions_state_machine": "invoice-pipeline-dev",
+        "glue_jobs": {
+            "normalize": "invoice-pipeline-normalize-dev",
+            "consolidate": "invoice-pipeline-consolidate-dev",
+        },
+        "lambda_handlers": {
+            "prevalidation": "invoice-pipeline-prevalidation-dev",
+            "publish_metrics": "invoice-pipeline-publish-metrics-dev",
+        },
+        "cloudwatch": {
+            "log_group": "/aws/invoice-pipeline/dev",
+            "namespace": "InvoicePipeline",
+        },
+    },
     "quality": {
-        "critical_fields": ["document_id", "source_file", "raw_text_path"],
-        "measured_fields": ["total_amount", "document_date", "vendor_or_requester"],
+        "critical_fields": [
+            "run_id",
+            "document_id",
+            "source_s3_key",
+            "source_file_name",
+            "extraction_engine",
+            "created_at",
+        ],
+        "measured_fields": ["total_amount", "document_date", "vendor_name"],
         "advisory_flags": [
             "missing_total_amount",
             "missing_document_date",
-            "missing_vendor_or_requester",
+            "vendor_missing",
             "invalid_total_amount",
             "invalid_document_date",
             "unknown_document_type",
         ],
+        "spec_path": "specs/quality/bronze_to_silver_rules.yaml",
     },
     "stress": {
         "default_limit": None,

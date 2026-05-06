@@ -1,0 +1,85 @@
+required_fields:
+  - run_id
+  - document_id
+  - source_s3_key
+  - source_file_name
+  - extraction_engine
+  - created_at
+
+minimum_acceptance:
+  require_at_least_one:
+    - vendor_name
+    - document_date
+    - total_amount
+
+document_date_rules:
+  allow_null: true
+  min_year: 2000
+  max_year: current_year
+  reject_future_dates: true
+  reject_invalid_calendar_dates: true
+  on_invalid_date:
+    status: rejected
+    flag: invalid_document_date
+    reason: document_date_out_of_allowed_range
+
+amount_rules:
+  allow_null: true
+  min_value: 0
+  max_value: 1000000
+  reject_negative_amounts: true
+  reject_extreme_outliers: true
+  on_extreme_amount:
+    status: rejected
+    flag: amount_outlier
+    reason: total_amount_exceeds_allowed_threshold
+
+currency_rules:
+  allow_null: true
+  allowed_values:
+    - PEN
+    - USD
+    - EUR
+  infer_from_text: true
+  default_if_missing: null
+  on_missing_currency:
+    status: warning
+    flag: currency_missing
+  on_invalid_currency:
+    status: rejected
+    flag: invalid_currency
+    reason: currency_not_allowed
+
+vendor_rules:
+  allow_null: true
+  min_length: 2
+  reject_numeric_only: true
+  normalize_whitespace: true
+  on_missing_vendor:
+    status: warning
+    flag: vendor_missing
+  on_invalid_vendor:
+    status: rejected
+    flag: invalid_vendor
+    reason: vendor_name_not_usable
+
+document_type_rules:
+  allowed_values:
+    - invoice
+    - receipt
+    - contribution
+    - credit_note
+    - unknown
+  allow_unknown: true
+  max_unknown_rate_per_run: 0.20
+  on_unknown_document_type:
+    status: warning
+    flag: unknown_document_type
+
+technical_failure_flags:
+  - invalid_json_response
+  - empty_llm_response
+  - ollama_request_failed
+  - textract_request_failed
+  - bedrock_request_failed
+

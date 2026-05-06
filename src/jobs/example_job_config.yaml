@@ -1,0 +1,4 @@
+job_name: orders_curated
+transformation_sql: src/jobs/sql/orders_curated.sql
+contract_path: src/jobs/contracts/orders_curated.yaml
+

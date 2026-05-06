@@ -1,0 +1,28 @@
+run_metrics:
+  - run_id
+  - execution_mode
+  - started_at
+  - completed_at
+  - documents_received
+  - documents_processed
+  - documents_accepted
+  - documents_rejected
+  - documents_failed
+  - elapsed_seconds_total
+  - latency_p50_seconds
+  - latency_p95_seconds
+  - latency_max_seconds
+  - vendor_completion_rate
+  - date_completion_rate
+  - amount_completion_rate
+  - currency_completion_rate
+  - unknown_document_type_rate
+  - estimated_textract_cost
+  - estimated_bedrock_cost
+  - estimated_total_cost
+
+phase_metrics:
+  - bronze
+  - silver
+  - gold
+

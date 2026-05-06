@@ -1,6 +1,7 @@
-project_name = "data-platform"
+project_name = "invoice-pipeline"
 environment  = "dev"
 aws_region   = "us-east-1"
+bedrock_model_id = "bedrock-model-id"
 
 tags = {
   Owner = "data-engineering"

@@ -1,0 +1,25 @@
+required_columns:
+  - run_id
+  - document_id
+  - source_s3_key
+  - source_file_name
+  - document_type
+  - processing_status
+  - quality_status
+  - quality_flags
+  - created_at
+
+completion_metrics:
+  - vendor_name
+  - document_date
+  - total_amount
+  - currency
+
+reject_statuses_from_gold:
+  - rejected
+  - failed
+
+partitioning:
+  by:
+    - run_date
+

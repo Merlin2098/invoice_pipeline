@@ -1,9 +1,7 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  name_prefix  = lower(replace("${var.project_name}-${var.environment}", "_", "-"))
-  bucket_name  = "${local.name_prefix}-${data.aws_caller_identity.current.account_id}-${var.artifact_bucket_suffix}"
-  artifact_key = "packages/${basename(var.artifact_path)}"
+  name_prefix = lower(replace("${var.project_name}-${var.environment}", "_", "-"))
   common_tags = merge(
     {
       Project     = var.project_name
@@ -14,86 +12,63 @@ locals {
   )
 }
 
-resource "aws_s3_bucket" "artifacts" {
-  bucket = local.bucket_name
-  tags   = local.common_tags
+module "storage" {
+  source = "./modules/storage"
+
+  account_id                = data.aws_caller_identity.current.account_id
+  name_prefix               = local.name_prefix
+  artifact_bucket_suffix    = var.artifact_bucket_suffix
+  data_lake_bucket_suffix   = var.data_lake_bucket_suffix
+  raw_prefix                = var.raw_prefix
+  bronze_prefix             = var.bronze_prefix
+  silver_valid_prefix       = var.silver_valid_prefix
+  silver_rejected_prefix    = var.silver_rejected_prefix
+  gold_prefix               = var.gold_prefix
+  metrics_prefix            = var.metrics_prefix
+  tags                      = local.common_tags
 }
 
-resource "aws_s3_bucket_versioning" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
+module "compute" {
+  source = "./modules/compute"
 
-  versioning_configuration {
-    status = "Enabled"
-  }
+  name_prefix                = local.name_prefix
+  artifact_bucket_name       = module.storage.artifact_bucket_name
+  artifact_bucket_arn        = module.storage.artifact_bucket_arn
+  data_lake_bucket_name      = module.storage.data_lake_bucket_name
+  data_lake_bucket_arn       = module.storage.data_lake_bucket_arn
+  lambda_package_s3_key      = var.lambda_package_s3_key
+  normalize_script_s3_key    = var.normalize_script_s3_key
+  consolidate_script_s3_key  = var.consolidate_script_s3_key
+  bedrock_model_id           = var.bedrock_model_id
+  cloudwatch_namespace       = var.cloudwatch_namespace
+  tags                       = local.common_tags
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.bucket
+module "orchestration" {
+  source = "./modules/orchestration"
 
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
+  name_prefix                 = local.name_prefix
+  data_lake_bucket_name       = module.storage.data_lake_bucket_name
+  data_lake_bucket_arn        = module.storage.data_lake_bucket_arn
+  raw_prefix                  = var.raw_prefix
+  bronze_prefix               = var.bronze_prefix
+  silver_valid_prefix         = var.silver_valid_prefix
+  silver_rejected_prefix      = var.silver_rejected_prefix
+  gold_prefix                 = var.gold_prefix
+  metrics_prefix              = var.metrics_prefix
+  prevalidation_lambda_arn    = module.compute.prevalidation_lambda_arn
+  publish_metrics_lambda_arn  = module.compute.publish_metrics_lambda_arn
+  normalize_job_name          = module.compute.normalize_job_name
+  consolidate_job_name        = module.compute.consolidate_job_name
+  bedrock_model_id            = var.bedrock_model_id
+  state_machine_log_group_name = var.state_machine_log_group_name
+  tags                        = local.common_tags
 }
 
-resource "aws_s3_bucket_public_access_block" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
+module "observability" {
+  source = "./modules/observability"
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_object" "artifact_bundle" {
-  bucket = aws_s3_bucket.artifacts.id
-  key    = local.artifact_key
-  source = var.artifact_path
-  etag   = filemd5(var.artifact_path)
-  tags   = local.common_tags
-}
-
-data "aws_iam_policy_document" "glue_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["glue.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "data_job_execution" {
-  name               = "${local.name_prefix}-${var.execution_role_name}"
-  assume_role_policy = data.aws_iam_policy_document.glue_assume_role.json
-  tags               = local.common_tags
-}
-
-resource "aws_iam_role_policy_attachment" "glue_service_role" {
-  role       = aws_iam_role.data_job_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
-}
-
-data "aws_iam_policy_document" "artifact_access" {
-  statement {
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-    ]
-    resources = ["${aws_s3_bucket.artifacts.arn}/*"]
-  }
-
-  statement {
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.artifacts.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "artifact_access" {
-  name   = "${local.name_prefix}-artifact-access"
-  role   = aws_iam_role.data_job_execution.id
-  policy = data.aws_iam_policy_document.artifact_access.json
+  name_prefix = local.name_prefix
+  namespace   = var.cloudwatch_namespace
+  tags        = local.common_tags
 }

@@ -1,0 +1,8 @@
+reference_documents:
+  run_label: baseline_local_vs_aws
+  files:
+    - 0000023361.tif
+    - 0000037007.tif
+    - 0000037010.tif
+    - 0000089370.tif
+

@@ -1,0 +1,126 @@
+title: silver_document
+type: object
+additionalProperties: false
+required:
+  - run_id
+  - document_id
+  - source_s3_key
+  - source_file_name
+  - document_type
+  - extraction_engine
+  - quality_status
+  - quality_score
+  - quality_flags
+  - processing_status
+  - created_at
+properties:
+  run_id:
+    type: string
+  document_id:
+    type: string
+  source_s3_key:
+    type: string
+  source_file_name:
+    type: string
+  raw_text_path:
+    type:
+      - string
+      - "null"
+  source_file:
+    type:
+      - string
+      - "null"
+  document_type:
+    type: string
+    enum:
+      - invoice
+      - receipt
+      - contribution
+      - credit_note
+      - unknown
+  document_type_confidence:
+    type:
+      - number
+      - "null"
+  vendor_name:
+    type:
+      - string
+      - "null"
+  vendor_confidence:
+    type:
+      - number
+      - "null"
+  document_date:
+    type:
+      - string
+      - "null"
+  document_date_confidence:
+    type:
+      - number
+      - "null"
+  total_amount:
+    type:
+      - number
+      - "null"
+  total_amount_confidence:
+    type:
+      - number
+      - "null"
+  currency:
+    type:
+      - string
+      - "null"
+  currency_confidence:
+    type:
+      - number
+      - "null"
+  extraction_engine:
+    type: string
+  normalization_engine:
+    type:
+      - string
+      - "null"
+  llm_model_id:
+    type:
+      - string
+      - "null"
+  processing_status:
+    type: string
+    enum:
+      - received
+      - extracted
+      - normalized
+      - accepted
+      - rejected
+      - failed
+  quality_status:
+    type: string
+    enum:
+      - accepted
+      - rejected
+      - warning
+  quality_score:
+    type: number
+  quality_flags:
+    type: array
+    items:
+      type: string
+  ocr_confidence_flags:
+    type: array
+    items:
+      type: string
+  rejection_reason:
+    type:
+      - string
+      - "null"
+  reason_code:
+    type:
+      - string
+      - "null"
+  vendor_or_requester:
+    type:
+      - string
+      - "null"
+  created_at:
+    type: string
+    format: date-time

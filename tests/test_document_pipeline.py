@@ -3,33 +3,23 @@ import logging
 import shutil
 from pathlib import Path
 
+import jsonschema
+import pandas as pd
 import yaml
 from PIL import Image
 
 import run_pipeline
 from scripts import stress_pipeline
 from src.config.pipeline_config import load_pipeline_config
-from src.pipeline import llm_ollama
 from src.pipeline.bronze_pipeline import format_ocr_markdown, run_bronze_pipeline
-from src.pipeline.gold_model import (
-    build_documents_table,
-    normalize_amount,
-    normalize_date,
-    run_gold_pipeline,
-)
-from src.pipeline.llm_ollama import (
-    MODEL_NAME,
-    MINIMAL_EXTRACTION_SCHEMA,
-    build_ollama_payload,
-)
-from src.pipeline.ocr import clean_text, ocr_extract
-from src.pipeline.postprocess import (
-    classify_document_type,
-    clean_string,
-    map_to_contract,
-)
-from src.pipeline.silver_pipeline import process_with_llm
-from src.pipeline.silver_pipeline import run_silver_pipeline
+from src.pipeline.gold_model import build_documents_table, run_gold_pipeline
+from src.pipeline.llm_ollama import MINIMAL_EXTRACTION_SCHEMA, MODEL_NAME, build_ollama_payload
+from src.pipeline.postprocess import clean_string, classify_document_type, normalize_amount, normalize_date
+from src.pipeline.quality import build_local_silver_document, create_failed_document
+from src.pipeline.run_context import build_run_context
+from src.pipeline.silver_pipeline import process_with_llm, run_silver_pipeline
+from src.pipeline.specs import load_contract_schema
+from src.pipeline import llm_ollama
 from src.services import llm_service
 from src.utils import logging as pipeline_logging
 
@@ -45,60 +35,29 @@ def clean_test_dir(name: str) -> Path:
     return path
 
 
-def test_data_contract_contains_required_groups() -> None:
-    contract = yaml.safe_load(
-        Path("src/config/data_contract.yaml").read_text(encoding="utf-8")
-    )
-
-    assert {"common", "invoice", "contribution"}.issubset(contract)
-    assert (
-        "Original source files loaded into data/raw"
-        in contract["contract"]["medallion_layers"]["raw"]
-    )
-    assert (
-        "Markdown OCR files generated from raw files"
-        in contract["contract"]["medallion_layers"]["bronze"]
-    )
-    assert contract["contract"]["extraction_v1"]["prompt_fields"] == [
-        "total_amount",
-        "document_date",
-        "vendor_name",
-    ]
-    assert contract["contract"]["quality_rules"]["measured_fields"] == [
-        "total_amount",
-        "document_date",
-        "vendor_or_requester",
-    ]
-    assert contract["common"]["document_id"]["nullable"] is False
-    assert contract["invoice"]["amount_due"]["type"] == "float"
-    assert contract["contribution"]["party"]["type"] == "string"
-
-
-def test_pipeline_config_loads_defaults() -> None:
+def test_pipeline_config_loads_new_defaults() -> None:
     config = load_pipeline_config()
 
-    assert config["llm"]["model"] == "qwen3.5:4b"
-    assert config["llm"]["timeout_seconds"] == 60
-    assert config["llm"]["retries"] == 1
-    assert config["llm"]["concurrency"] == 1
-    assert config["quality"]["measured_fields"] == [
-        "total_amount",
-        "document_date",
-        "vendor_or_requester",
-    ]
+    assert config["execution_mode"] == "local"
+    assert config["paths"]["silver_valid_dir"] == "data/silver/valid"
+    assert config["paths"]["silver_rejected_dir"] == "data/silver/rejected"
+    assert config["paths"]["silver_failed_dir"] == "data/errors/silver_failed"
+    assert config["run"]["manifest_dir"] == "logs/runs"
+    assert config["aws"]["glue_jobs"]["normalize"] == "invoice-pipeline-normalize-dev"
 
 
-def test_raw_to_bronze_ocr_helpers_support_tif(monkeypatch) -> None:
-    test_dir = clean_test_dir("ocr")
-    image_path = test_dir / "sample.tif"
-    Image.new("RGB", (10, 10), color="white").save(image_path)
-
-    monkeypatch.setattr(
-        "src.pipeline.ocr.pytesseract.image_to_string", lambda image: " A \n\n B "
+def test_reference_fixture_and_specs_exist() -> None:
+    reference_manifest = yaml.safe_load(
+        Path("tests/fixtures/reference_documents.yaml").read_text(encoding="utf-8")
     )
+    expected_rows = Path("tests/fixtures/expected_documents.csv").read_text(
+        encoding="utf-8"
+    ).splitlines()
 
-    assert clean_text(" A \n\n B ") == "A\nB"
-    assert ocr_extract(image_path) == "A\nB"
+    assert reference_manifest["reference_documents"]["run_label"] == "baseline_local_vs_aws"
+    assert len(reference_manifest["reference_documents"]["files"]) == 4
+    assert len(expected_rows) == 5
+    assert load_contract_schema("silver_document.schema.yaml")["title"] == "silver_document"
 
 
 def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch, caplog) -> None:
@@ -113,46 +72,68 @@ def test_bronze_pipeline_reads_raw_and_writes_bronze(monkeypatch, caplog) -> Non
     )
 
     with caplog.at_level(logging.INFO):
-        run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
+        metrics = run_bronze_pipeline(
+            raw_dir=raw_dir,
+            bronze_dir=bronze_dir,
+            run_id="test-run",
+        )
 
     output = (bronze_dir / "invoice.md").read_text(encoding="utf-8")
     assert "# OCR Extract" in output
     assert "OCR for invoice" in output
-    assert "BRONZE_METRICS total=1 succeeded=1 failed=0" in caplog.text
+    assert metrics["run_id"] == "test-run"
+    assert "run_id=test-run BRONZE_METRICS total=1 succeeded=1 failed=0" in caplog.text
 
 
 def test_ocr_markdown_includes_source_metadata() -> None:
     markdown = format_ocr_markdown("OCR body", Path("data/raw/invoice.tif"))
 
     assert "- Source file: `invoice.tif`" in markdown
+    assert "- Source path: `data/raw/invoice.tif`" in markdown
     assert "```text\nOCR body\n```" in markdown
 
 
-def test_root_pipeline_runs_phases_in_order(monkeypatch) -> None:
-    calls = []
+def test_root_pipeline_runs_phases_and_writes_manifest(monkeypatch) -> None:
+    context = build_run_context(load_pipeline_config())
 
     monkeypatch.setattr(
-        run_pipeline, "run_bronze_pipeline", lambda: calls.append("bronze")
+        run_pipeline,
+        "build_run_context",
+        lambda config, execution_mode=None: context,
     )
     monkeypatch.setattr(
-        run_pipeline, "run_silver_pipeline", lambda: calls.append("silver")
+        run_pipeline, "run_bronze_pipeline", lambda **kwargs: {"total": 2, "run_id": context.run_id}
     )
-    monkeypatch.setattr(run_pipeline, "run_gold_pipeline", lambda: calls.append("gold"))
+    monkeypatch.setattr(
+        run_pipeline,
+        "run_silver_pipeline",
+        lambda **kwargs: {
+            "succeeded": 1,
+            "rejected": 1,
+            "failed": 0,
+            "run_id": context.run_id,
+        },
+    )
+    monkeypatch.setattr(
+        run_pipeline,
+        "run_gold_pipeline",
+        lambda **kwargs: {
+            "vendor_completion_rate": 0.5,
+            "date_completion_rate": 0.5,
+            "amount_completion_rate": 1.0,
+            "currency_completion_rate": 1.0,
+            "unknown_document_type_rate": 0.5,
+            "run_id": context.run_id,
+        },
+    )
 
-    run_pipeline.run_pipeline()
+    summary = run_pipeline.run_pipeline()
+    manifest = json.loads(Path(context.manifest_path).read_text(encoding="utf-8"))
 
-    assert calls == ["bronze", "silver", "gold"]
-
-
-def test_configure_logging_writes_to_logs_dir(monkeypatch) -> None:
-    test_dir = clean_test_dir("logging")
-    monkeypatch.setattr(pipeline_logging, "LOGS_DIR", test_dir / "logs")
-
-    pipeline_logging.configure_logging("test.log")
-    logging.getLogger("test_logger").info("hello logs")
-    logging.shutdown()
-
-    assert (test_dir / "logs" / "test.log").read_text(encoding="utf-8")
+    assert summary["run_id"] == context.run_id
+    assert summary["documents_received"] == 2
+    assert manifest["run"]["run_id"] == context.run_id
+    assert manifest["summary"]["documents_rejected"] == 1
 
 
 def test_parse_json_response_handles_common_shapes() -> None:
@@ -171,19 +152,14 @@ def test_parse_json_response_handles_common_shapes() -> None:
     ]
 
 
-def test_ollama_defaults_to_available_text_extraction_model() -> None:
-    assert MODEL_NAME == "qwen3.5:4b"
-
-
 def test_ollama_payload_forces_json_and_bounded_output() -> None:
     payload = build_ollama_payload("extract this")
 
-    assert payload["model"] == "qwen3.5:4b"
+    assert payload["model"] == MODEL_NAME
     assert payload["format"] == MINIMAL_EXTRACTION_SCHEMA
     assert payload["think"] is False
     assert payload["stream"] is False
     assert payload["options"]["temperature"] == 0
-    assert payload["options"]["num_predict"] == 800
 
 
 def test_validate_ollama_model_fails_fast_for_missing_model(monkeypatch) -> None:
@@ -226,123 +202,6 @@ def test_llm_service_call_ollama_uses_mocked_requests(monkeypatch) -> None:
     assert captured["json"]["format"] == MINIMAL_EXTRACTION_SCHEMA
 
 
-def test_silver_pipeline_writes_one_json_per_bronze_file(monkeypatch) -> None:
-    test_dir = clean_test_dir("silver_pipeline")
-    bronze_dir = test_dir / "bronze"
-    silver_dir = test_dir / "silver"
-    bronze_dir.mkdir()
-    (bronze_dir / "sample.md").write_text(
-        "# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8"
-    )
-
-    def fake_extract(text: str) -> dict:
-        assert "TOTAL" in text
-        return {
-            "total_amount": "$10.00",
-            "document_date": None,
-            "vendor_name": "Acme",
-            "ocr_confidence_flags": [],
-        }
-
-    monkeypatch.setattr(
-        "src.pipeline.silver_pipeline.extract_structured_data", fake_extract
-    )
-
-    run_silver_pipeline(
-        bronze_dir=bronze_dir,
-        silver_dir=silver_dir,
-        max_retries=0,
-        validate_model=False,
-    )
-
-    output = json.loads((silver_dir / "sample.json").read_text(encoding="utf-8"))
-    assert output["source_file"] == "sample.md"
-    assert output["document_id"] == "sample"
-    assert output["document_type"] == "invoice"
-    assert output["vendor_or_requester"] == "Acme"
-    assert output["total_amount"] == 10.0
-    assert output["recipient_name"] is None
-    assert output["raw_text_path"].endswith("sample.md")
-
-
-def test_silver_pipeline_logs_success_metrics(monkeypatch, caplog) -> None:
-    test_dir = clean_test_dir("silver_pipeline_metrics")
-    bronze_dir = test_dir / "bronze"
-    silver_dir = test_dir / "silver"
-    bronze_dir.mkdir()
-    (bronze_dir / "sample.md").write_text(
-        "# OCR Extract\n\nINVOICE\nTOTAL $10.00", encoding="utf-8"
-    )
-
-    monkeypatch.setattr(
-        "src.pipeline.silver_pipeline.extract_structured_data",
-        lambda text: {
-            "total_amount": "$10.00",
-            "document_date": None,
-            "vendor_name": "Acme",
-        },
-    )
-
-    with caplog.at_level(logging.INFO):
-        run_silver_pipeline(
-            bronze_dir=bronze_dir,
-            silver_dir=silver_dir,
-            max_retries=0,
-            validate_model=False,
-        )
-
-    assert "SILVER_METRICS total=1 succeeded=1 failed=0" in caplog.text
-
-
-def test_silver_pipeline_writes_failed_extraction_to_errors(monkeypatch) -> None:
-    test_dir = clean_test_dir("silver_pipeline_errors")
-    bronze_dir = test_dir / "bronze"
-    silver_dir = test_dir / "silver"
-    errors_dir = test_dir / "errors" / "silver"
-    bronze_dir.mkdir()
-    (bronze_dir / "bad.md").write_text("INVOICE\nTOTAL $10.00", encoding="utf-8")
-
-    monkeypatch.setattr(
-        "src.pipeline.silver_pipeline.extract_structured_data",
-        lambda text: {"ocr_confidence_flags": ["invalid_json_response"]},
-    )
-
-    run_silver_pipeline(
-        bronze_dir=bronze_dir,
-        silver_dir=silver_dir,
-        errors_dir=errors_dir,
-        max_retries=0,
-        validate_model=False,
-    )
-
-    assert not (silver_dir / "bad.json").exists()
-    assert (errors_dir / "bad.json").exists()
-
-
-def test_silver_pipeline_writes_output_by_document_id(monkeypatch) -> None:
-    test_dir = clean_test_dir("silver_pipeline_document_id")
-    bronze_dir = test_dir / "bronze"
-    silver_dir = test_dir / "silver"
-    bronze_dir.mkdir()
-    (bronze_dir / "source_name.md").write_text(
-        "POLITICAL CAMPAIGN CONTRIBUTION REQUEST", encoding="utf-8"
-    )
-
-    monkeypatch.setattr(
-        "src.pipeline.silver_pipeline.extract_structured_data",
-        lambda text: {"total_amount": None, "document_date": None, "vendor_name": None},
-    )
-
-    run_silver_pipeline(
-        bronze_dir=bronze_dir,
-        silver_dir=silver_dir,
-        max_retries=0,
-        validate_model=False,
-    )
-
-    assert (silver_dir / "source_name.json").exists()
-
-
 def test_process_with_llm_retries_invalid_json(monkeypatch) -> None:
     responses = [
         {"ocr_confidence_flags": ["invalid_json_response"]},
@@ -357,165 +216,253 @@ def test_process_with_llm_retries_invalid_json(monkeypatch) -> None:
     assert process_with_llm("INVOICE", max_retries=2)["document_type"] == "invoice"
 
 
+def test_local_quality_builds_warning_and_rejection_documents() -> None:
+    warning = build_local_silver_document(
+        {
+            "total_amount": "$10.00",
+            "document_date": None,
+            "vendor_name": "Acme",
+            "ocr_confidence_flags": [],
+        },
+        source_file_name="sample.tif",
+        raw_text_path="data/bronze/sample.md",
+        source_s3_key="data/raw/sample.tif",
+        raw_text="Invoice total $10.00",
+        run_id="run-1",
+        created_at="2026-05-05T00:00:00Z",
+        llm_model_id="qwen3.5:4b",
+    )
+    rejected = build_local_silver_document(
+        {
+            "total_amount": "1084432400.0",
+            "document_date": "2075-05-02",
+            "vendor_name": None,
+            "ocr_confidence_flags": [],
+        },
+        source_file_name="sample.tif",
+        raw_text_path="data/bronze/sample.md",
+        source_s3_key="data/raw/sample.tif",
+        raw_text="plain memo",
+        run_id="run-1",
+        created_at="2026-05-05T00:00:00Z",
+        llm_model_id="qwen3.5:4b",
+    )
+
+    assert warning["processing_status"] == "accepted"
+    assert warning["quality_status"] == "warning"
+    assert rejected["processing_status"] == "rejected"
+    assert rejected["rejection_reason"] in {
+        "document_date_out_of_allowed_range",
+        "total_amount_exceeds_allowed_threshold",
+    }
+
+
+def test_failed_document_uses_canonical_failure_shape() -> None:
+    failed = create_failed_document(
+        run_id="run-1",
+        document_id="sample",
+        source_s3_key="raw/run_id=run-1/sample.tif",
+        source_file_name="sample.tif",
+        extraction_engine="local_tesseract",
+        normalization_engine="local_ollama",
+        llm_model_id="qwen",
+        created_at="2026-05-05T00:00:00Z",
+        failure_flags=["invalid_json_response"],
+    )
+
+    schema = load_contract_schema("silver_document.schema.yaml")
+    jsonschema.validate(failed, schema)
+    assert failed["processing_status"] == "failed"
+    assert failed["reason_code"] == "technical_processing_failure"
+
+
+def test_silver_pipeline_routes_valid_rejected_and_failed(monkeypatch) -> None:
+    test_dir = clean_test_dir("silver_pipeline")
+    bronze_dir = test_dir / "bronze"
+    silver_valid_dir = test_dir / "silver" / "valid"
+    silver_rejected_dir = test_dir / "silver" / "rejected"
+    silver_failed_dir = test_dir / "errors" / "silver_failed"
+    bronze_dir.mkdir(parents=True)
+    (bronze_dir / "valid.md").write_text(
+        "# OCR Extract\n- Source file: `valid.tif`\n- Source path: `data/raw/valid.tif`\n\nINVOICE\nTOTAL $10.00",
+        encoding="utf-8",
+    )
+    (bronze_dir / "reject.md").write_text(
+        "# OCR Extract\n- Source file: `reject.tif`\n- Source path: `data/raw/reject.tif`\n\nplain memo",
+        encoding="utf-8",
+    )
+    (bronze_dir / "failed.md").write_text(
+        "# OCR Extract\n- Source file: `failed.tif`\n- Source path: `data/raw/failed.tif`\n\nINVOICE",
+        encoding="utf-8",
+    )
+
+    responses = {
+        "valid": {
+            "total_amount": "$10.00",
+            "document_date": "2005-01-01",
+            "vendor_name": "Acme",
+            "ocr_confidence_flags": [],
+        },
+        "reject": {
+            "total_amount": None,
+            "document_date": None,
+            "vendor_name": None,
+            "ocr_confidence_flags": [],
+        },
+        "failed": {"ocr_confidence_flags": ["invalid_json_response"]},
+    }
+
+    def fake_extract(text: str) -> dict:
+        if "TOTAL" in text:
+            return responses["valid"]
+        if "plain memo" in text:
+            return responses["reject"]
+        return responses["failed"]
+
+    monkeypatch.setattr(
+        "src.pipeline.silver_pipeline.extract_structured_data", fake_extract
+    )
+
+    metrics = run_silver_pipeline(
+        bronze_dir=bronze_dir,
+        silver_dir=silver_valid_dir,
+        rejected_dir=silver_rejected_dir,
+        failed_dir=silver_failed_dir,
+        max_retries=0,
+        validate_model=False,
+        run_id="test-run",
+        llm_model_id="qwen3.5:4b",
+    )
+
+    assert (silver_valid_dir / "valid.json").exists()
+    assert (silver_rejected_dir / "reject.json").exists()
+    assert (silver_failed_dir / "failed.json").exists()
+    assert metrics["succeeded"] == 1
+    assert metrics["rejected"] == 1
+    assert metrics["failed"] == 1
+
+
 def test_normalizers_handle_ocr_noise() -> None:
     assert normalize_amount("$700 00") == 700.0
     assert normalize_amount("[5200.00 J") == 5200.0
     assert normalize_date("October 26, 1998") == "1998-10-26"
-
-
-def test_postprocess_maps_minimal_extraction_to_contract() -> None:
-    mapped = map_to_contract(
-        {
-            "total_amount": "$500.00",
-            "document_date": "9/26/97",
-            "vendor_name": " â€˜AcmeÂ® ",
-        },
-        source_file="sample.md",
-        raw_text_path="data/bronze/sample.md",
-        text="POLITICAL CAMPAIGN CONTRIBUTION REQUEST Amount $500.00",
-    )
-
-    assert mapped["document_id"] == "sample"
-    assert mapped["document_type"] == "contribution"
-    assert mapped["document_date"] == "1997-09-26"
-    assert mapped["total_amount"] == 500.0
-    assert mapped["amount"] == 500.0
-    assert mapped["currency"] == "USD"
-    assert mapped["vendor_or_requester"] == "Acme"
-
-
-def test_postprocess_adds_quality_flags_for_missing_prompt_fields() -> None:
-    mapped = map_to_contract(
-        {"total_amount": None, "document_date": None, "vendor_name": None},
-        source_file="sample.md",
-        raw_text_path="data/bronze/sample.md",
-        text="plain memo",
-    )
-
-    assert "missing_total_amount" in mapped["ocr_confidence_flags"]
-    assert "missing_document_date" in mapped["ocr_confidence_flags"]
-    assert "missing_vendor_or_requester" in mapped["ocr_confidence_flags"]
-    assert "unknown_document_type" in mapped["ocr_confidence_flags"]
-
-
-def test_keyword_classification_and_string_cleaning() -> None:
     assert classify_document_type("INVOICE TOTAL") == "invoice"
     assert (
         classify_document_type("POLITICAL CAMPAIGN CONTRIBUTION REQUEST")
         == "contribution"
     )
-    assert classify_document_type("plain memo") == "unknown"
-    assert clean_string(" â€˜VendorÂ®  Name ") == "Vendor Name"
+    assert clean_string(" Ã¢â‚¬ËœVendorÃ‚Â®  Name ") == "Vendor Name"
+
+
+def test_gold_pipeline_writes_partitioned_parquet_outputs() -> None:
+    test_dir = clean_test_dir("gold_pipeline")
+    silver_dir = test_dir / "silver" / "valid"
+    gold_dir = test_dir / "gold"
+    silver_dir.mkdir(parents=True)
+    (silver_dir / "invoice.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "source_s3_key": "raw/run_id=run-1/invoice.tif",
+                "source_file_name": "invoice.tif",
+                "document_type": "invoice",
+                "document_id": "invoice",
+                "document_date": "2024-05-13",
+                "total_amount": 12.34,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "extraction_engine": "local_tesseract",
+                "normalization_engine": "local_ollama",
+                "llm_model_id": "qwen",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "quality_flags": [],
+                "rejection_reason": None,
+                "created_at": "2026-05-05T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir, run_id="run-1")
+
+    assert (gold_dir / "documents.parquet").exists()
+    assert (gold_dir / "run_date=2026-05-05" / "documents.parquet").exists()
+    assert metrics["currency_completion_rate"] == 1.0
 
 
 def test_gold_mapping_builds_documents_table() -> None:
     documents = build_documents_table(
         [
             {
-                "source_file": "invoice.txt",
+                "run_id": "run-1",
+                "source_s3_key": "raw/run_id=run-1/invoice.tif",
+                "source_file_name": "invoice.tif",
                 "document_type": "invoice",
                 "document_id": "invoice",
                 "document_date": "5/13/94",
-                "invoice_number": "27011",
-                "amount_due": "$481.58",
-                "ocr_confidence_flags": [],
-            },
-            {
-                "source_file": "contribution.txt",
-                "document_type": "contribution",
-                "document_id": "contribution",
-                "document_date": "9/11/98",
-                "party": "Democrat",
-                "amount": "$200.00",
-                "ocr_confidence_flags": [],
-            },
+                "total_amount": "$481.58",
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "extraction_engine": "local_tesseract",
+                "normalization_engine": "local_ollama",
+                "llm_model_id": "qwen",
+                "processing_status": "accepted",
+                "quality_status": "warning",
+                "quality_flags": ["currency_missing"],
+                "rejection_reason": None,
+                "created_at": "2026-05-05T00:00:00Z",
+            }
         ]
     )
 
-    assert len(documents) == 2
-    assert list(documents["document_id"]) == ["invoice", "contribution"]
-    assert (
-        documents.loc[documents["document_id"] == "invoice", "total_amount"].iloc[0]
-        is None
-    )
-    assert (
-        documents.loc[documents["document_id"] == "contribution", "amount"].iloc[0]
-        == 200.0
-    )
+    assert len(documents) == 1
+    assert documents.loc[0, "document_id"] == "invoice"
+    assert documents.loc[0, "total_amount"] == 481.58
 
 
-def test_gold_pipeline_writes_parquet_outputs() -> None:
-    test_dir = clean_test_dir("gold_pipeline")
-    silver_dir = test_dir / "silver"
-    gold_dir = test_dir / "gold"
-    silver_dir.mkdir()
-    (silver_dir / "invoice.json").write_text(
-        json.dumps(
-            {
-                "source_file": "invoice.txt",
-                "document_type": "invoice",
-                "document_id": "invoice",
-                "invoice_number": "1",
-                "amount_due": "$12.34",
-                "ocr_confidence_flags": [],
-            }
-        ),
-        encoding="utf-8",
-    )
+def test_configure_logging_writes_to_logs_dir(monkeypatch) -> None:
+    test_dir = clean_test_dir("logging")
+    monkeypatch.setattr(pipeline_logging, "LOGS_DIR", test_dir / "logs")
 
-    run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir)
+    pipeline_logging.configure_logging("test.log")
+    logging.getLogger("test_logger").info("hello logs")
+    logging.shutdown()
 
-    assert (gold_dir / "documents.parquet").exists()
-    assert not (gold_dir / "invoices.parquet").exists()
-    assert not (gold_dir / "contributions.parquet").exists()
-
-
-def test_gold_pipeline_logs_completion_metrics(caplog) -> None:
-    test_dir = clean_test_dir("gold_pipeline_metrics")
-    silver_dir = test_dir / "silver"
-    gold_dir = test_dir / "gold"
-    silver_dir.mkdir()
-    (silver_dir / "invoice.json").write_text(
-        json.dumps(
-            {
-                "source_file": "invoice.md",
-                "document_type": "invoice",
-                "document_id": "invoice",
-                "document_date": "1994-05-13",
-                "total_amount": 12.34,
-                "vendor_or_requester": "Acme",
-                "ocr_confidence_flags": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with caplog.at_level(logging.INFO):
-        run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir)
-
-    assert "GOLD_METRICS rows=1" in caplog.text
-    assert "amount_completion_rate=1.00" in caplog.text
+    assert (test_dir / "logs" / "test.log").read_text(encoding="utf-8")
 
 
 def test_stress_pipeline_writes_summary(monkeypatch) -> None:
     test_dir = clean_test_dir("stress_pipeline")
-    silver_dir = test_dir / "silver"
+    silver_dir = test_dir / "silver" / "valid"
     gold_dir = test_dir / "gold"
     logs_dir = test_dir / "logs"
-    silver_dir.mkdir()
+    silver_dir.mkdir(parents=True)
     gold_dir.mkdir()
     (silver_dir / "sample.json").write_text(
         json.dumps(
             {
-                "total_amount": 10.0,
+                "run_id": "run-1",
+                "source_s3_key": "raw/run_id=run-1/sample.tif",
+                "source_file_name": "sample.tif",
+                "document_type": "unknown",
+                "document_id": "sample",
                 "document_date": "1998-09-11",
-                "vendor_or_requester": "Acme",
-                "ocr_confidence_flags": ["unknown_document_type"],
+                "total_amount": 10.0,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "extraction_engine": "local_tesseract",
+                "normalization_engine": "local_ollama",
+                "llm_model_id": "qwen",
+                "processing_status": "accepted",
+                "quality_status": "warning",
+                "quality_flags": ["unknown_document_type"],
+                "rejection_reason": None,
+                "created_at": "2026-05-05T00:00:00Z",
             }
         ),
         encoding="utf-8",
     )
-    pd = __import__("pandas")
     pd.DataFrame([{"document_id": "sample"}]).to_parquet(
         gold_dir / "documents.parquet", index=False
     )
@@ -524,14 +471,24 @@ def test_stress_pipeline_writes_summary(monkeypatch) -> None:
         stress_pipeline,
         "load_pipeline_config",
         lambda: {
+            "execution_mode": "local",
             "paths": {
                 "raw_dir": str(test_dir / "raw"),
                 "bronze_dir": str(test_dir / "bronze"),
-                "silver_dir": str(silver_dir),
+                "silver_dir": str(test_dir / "silver"),
+                "silver_valid_dir": str(silver_dir),
+                "silver_rejected_dir": str(test_dir / "silver" / "rejected"),
                 "gold_dir": str(gold_dir),
                 "errors_dir": str(test_dir / "errors"),
-                "silver_errors_dir": str(test_dir / "errors" / "silver"),
+                "silver_failed_dir": str(test_dir / "errors" / "silver_failed"),
                 "logs_dir": str(logs_dir),
+            },
+            "run": {
+                "id_prefix": "invoice-pipeline",
+                "manifest_dir": str(logs_dir / "runs"),
+                "reference_manifest_path": str(
+                    Path("tests/fixtures/reference_documents.yaml")
+                ),
             },
             "stress": {"summary_path": str(logs_dir / "stress_summary.json")},
         },
@@ -554,6 +511,7 @@ def test_stress_pipeline_writes_summary(monkeypatch) -> None:
         lambda *args, **kwargs: {
             "total": 1,
             "succeeded": 1,
+            "rejected": 0,
             "failed": 0,
             "success_rate": 1,
             "elapsed_seconds": 0.2,
@@ -572,3 +530,19 @@ def test_stress_pipeline_writes_summary(monkeypatch) -> None:
     assert summary["silver_quality"]["completion_rates"]["total_amount"] == 1
     assert summary["silver_quality"]["flag_counts"]["unknown_document_type"] == 1
     assert (logs_dir / "stress_summary.json").exists()
+
+
+def test_supported_image_extensions_with_real_file(monkeypatch) -> None:
+    test_dir = clean_test_dir("ocr")
+    image_path = test_dir / "sample.tif"
+    Image.new("RGB", (10, 10), color="white").save(image_path)
+
+    monkeypatch.setattr(
+        "src.pipeline.ocr.pytesseract.image_to_string", lambda image: " A \n\n B "
+    )
+
+    from src.pipeline.ocr import clean_text as ocr_clean_text
+    from src.pipeline.ocr import ocr_extract
+
+    assert ocr_clean_text(" A \n\n B ") == "A\nB"
+    assert ocr_extract(image_path) == "A\nB"

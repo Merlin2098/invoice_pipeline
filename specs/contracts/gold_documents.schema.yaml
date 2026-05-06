@@ -1,0 +1,66 @@
+title: gold_documents
+type: object
+additionalProperties: false
+required:
+  - run_id
+  - document_id
+  - source_s3_key
+  - source_file_name
+  - document_type
+  - processing_status
+  - quality_status
+  - quality_flags
+  - created_at
+properties:
+  run_id:
+    type: string
+  document_id:
+    type: string
+  source_s3_key:
+    type: string
+  source_file_name:
+    type: string
+  document_type:
+    type: string
+  vendor_name:
+    type:
+      - string
+      - "null"
+  document_date:
+    type:
+      - string
+      - "null"
+  total_amount:
+    type:
+      - number
+      - "null"
+  currency:
+    type:
+      - string
+      - "null"
+  extraction_engine:
+    type: string
+  normalization_engine:
+    type:
+      - string
+      - "null"
+  llm_model_id:
+    type:
+      - string
+      - "null"
+  processing_status:
+    type: string
+  quality_status:
+    type: string
+  quality_flags:
+    type: array
+    items:
+      type: string
+  rejection_reason:
+    type:
+      - string
+      - "null"
+  created_at:
+    type: string
+    format: date-time
+

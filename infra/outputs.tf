@@ -1,14 +1,34 @@
 output "artifact_bucket_name" {
-  description = "S3 bucket used for packaged runtime artifacts."
-  value       = aws_s3_bucket.artifacts.bucket
+  description = "S3 bucket used for packaged Lambda and Glue artifacts."
+  value       = module.storage.artifact_bucket_name
 }
 
-output "artifact_bundle_s3_uri" {
-  description = "S3 URI of the packaged runtime artifact."
-  value       = "s3://${aws_s3_bucket.artifacts.bucket}/${aws_s3_object.artifact_bundle.key}"
+output "data_lake_bucket_name" {
+  description = "S3 data lake bucket for raw, bronze, silver, gold, and metrics."
+  value       = module.storage.data_lake_bucket_name
 }
 
-output "data_job_execution_role_arn" {
-  description = "IAM role ARN for Glue or other batch data jobs."
-  value       = aws_iam_role.data_job_execution.arn
+output "prevalidation_lambda_arn" {
+  description = "Lambda ARN used for file prevalidation."
+  value       = module.compute.prevalidation_lambda_arn
+}
+
+output "publish_metrics_lambda_arn" {
+  description = "Lambda ARN used for publishing run metrics."
+  value       = module.compute.publish_metrics_lambda_arn
+}
+
+output "normalize_job_name" {
+  description = "Glue job name for bronze to silver normalization."
+  value       = module.compute.normalize_job_name
+}
+
+output "consolidate_job_name" {
+  description = "Glue job name for silver to gold consolidation."
+  value       = module.compute.consolidate_job_name
+}
+
+output "state_machine_arn" {
+  description = "Step Functions state machine ARN."
+  value       = module.orchestration.state_machine_arn
 }

@@ -1,0 +1,107 @@
+{
+  "Comment": "Invoice pipeline dev state machine",
+  "StartAt": "PrevalidateInput",
+  "States": {
+    "PrevalidateInput": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${prevalidation_lambda_arn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.prevalidation",
+      "Next": "InputValid?"
+    },
+    "InputValid?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.prevalidation.Payload.valid",
+          "BooleanEquals": true,
+          "Next": "AnalyzeExpense"
+        }
+      ],
+      "Default": "ValidationFailed"
+    },
+    "ValidationFailed": {
+      "Type": "Fail",
+      "Cause": "Input validation failed"
+    },
+    "AnalyzeExpense": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:textract:analyzeExpense",
+      "Parameters": {
+        "Document": {
+          "S3Object": {
+            "Bucket": "${data_lake_bucket_name}",
+            "Name.$": "$.source_s3_key"
+          }
+        }
+      },
+      "ResultPath": "$.textract",
+      "Next": "NormalizeWithGlue"
+    },
+    "NormalizeWithGlue": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${normalize_job_name}",
+        "Arguments": {
+          "--run_id.$": "$.run_id",
+          "--source_s3_key.$": "$.source_s3_key",
+          "--textract_result.$": "States.JsonToString($.textract)"
+        }
+      },
+      "ResultPath": "$.normalization",
+      "Next": "BedrockRequired?"
+    },
+    "BedrockRequired?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.bedrock_required",
+          "BooleanEquals": true,
+          "Next": "InvokeBedrock"
+        }
+      ],
+      "Default": "ConsolidateGold"
+    },
+    "InvokeBedrock": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:bedrockruntime:invokeModel",
+      "Parameters": {
+        "ModelId": "${bedrock_model_id}",
+        "Body": "{}",
+        "ContentType": "application/json",
+        "Accept": "application/json"
+      },
+      "ResultPath": "$.bedrock",
+      "Next": "ConsolidateGold"
+    },
+    "ConsolidateGold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${consolidate_job_name}",
+        "Arguments": {
+          "--run_id.$": "$.run_id"
+        }
+      },
+      "ResultPath": "$.gold",
+      "Next": "PublishMetrics"
+    },
+    "PublishMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${publish_metrics_lambda_arn}",
+        "Payload": {
+          "run_id.$": "$.run_id",
+          "metrics": []
+        }
+      },
+      "End": true
+    }
+  }
+}
+

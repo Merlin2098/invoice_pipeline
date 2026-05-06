@@ -2,11 +2,11 @@ import logging
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 from src.config.pipeline_config import config_path, load_pipeline_config
 from src.services.ocr_service import extract_text as ocr_extract
 from src.services.ocr_service import format_ocr_markdown, supported_image_extensions
-from src.utils.logging import configure_logging
 
 _CONFIG = load_pipeline_config()
 RAW_DIR = config_path(_CONFIG, "raw_dir")
@@ -41,8 +41,11 @@ def iter_raw_files(raw_dir: Path = RAW_DIR, limit: int | None = None) -> list[Pa
 
 
 def run_bronze_pipeline(
-    raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR, limit: int | None = None
-) -> dict[str, object]:
+    raw_dir: Path = RAW_DIR,
+    bronze_dir: Path = BRONZE_DIR,
+    limit: int | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
     start = time.perf_counter()
     processed = 0
     failed = 0
@@ -64,7 +67,7 @@ def run_bronze_pipeline(
         output_path.write_text(format_ocr_markdown(text, file_path), encoding="utf-8")
         processed += 1
         durations.append(time.perf_counter() - doc_start)
-        logger.info("Wrote OCR markdown to %s", output_path)
+        logger.info("run_id=%s wrote OCR markdown to %s", run_id, output_path)
 
     elapsed = time.perf_counter() - start
     total = processed + failed
@@ -78,9 +81,11 @@ def run_bronze_pipeline(
         "elapsed_seconds": elapsed,
         "docs_per_second": rate,
         "durations": durations,
+        "run_id": run_id,
     }
     logger.info(
-        "BRONZE_METRICS total=%s succeeded=%s failed=%s success_rate=%.2f elapsed_seconds=%.2f docs_per_second=%.2f",
+        "run_id=%s BRONZE_METRICS total=%s succeeded=%s failed=%s success_rate=%.2f elapsed_seconds=%.2f docs_per_second=%.2f",
+        run_id,
         total,
         processed,
         failed,
@@ -93,8 +98,3 @@ def run_bronze_pipeline(
 
 def run_ocr_pipeline(raw_dir: Path = RAW_DIR, bronze_dir: Path = BRONZE_DIR) -> None:
     run_bronze_pipeline(raw_dir=raw_dir, bronze_dir=bronze_dir)
-
-
-if __name__ == "__main__":
-    configure_logging("bronze.log")
-    run_bronze_pipeline()
