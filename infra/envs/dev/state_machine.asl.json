@@ -1,0 +1,19 @@
+{
+  "Comment": "Foundation state machine for the Terraform MVP baseline. Detailed pipeline steps will be added in a later phase.",
+  "StartAt": "InvokeRawIngestionControl",
+  "States": {
+    "InvokeRawIngestionControl": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${raw_ingestion_lambda_arn}",
+        "Payload.$": "$"
+      },
+      "ResultPath": "$.control",
+      "Next": "FoundationReady"
+    },
+    "FoundationReady": {
+      "Type": "Succeed"
+    }
+  }
+}
