@@ -27,7 +27,7 @@ DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
         "retention_days": 30,
     },
     "ocr": {
-        "supported_extensions": [".png", ".jpg", ".jpeg", ".tif", ".tiff"],
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"],
     },
     "llm": {
         "base_url": "http://localhost:11434",
@@ -56,7 +56,9 @@ DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
             "consolidate": "invoice-pipeline-consolidate-dev",
         },
         "lambda_handlers": {
-            "prevalidation": "invoice-pipeline-prevalidation-dev",
+            "raw_dispatch": "invoice-pipeline-raw-dispatch-dev",
+            "validate_input": "invoice-pipeline-validate-input-dev",
+            "process_document": "invoice-pipeline-process-document-dev",
             "publish_metrics": "invoice-pipeline-publish-metrics-dev",
         },
         "cloudwatch": {

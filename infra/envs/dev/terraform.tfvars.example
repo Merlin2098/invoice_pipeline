@@ -1,14 +1,15 @@
-project_name                    = "invoice-pipeline"
-environment                     = "dev"
-owner                           = "data-engineering"
-aws_region                      = "us-east-1"
-artifact_bucket_suffix          = "artifacts"
-data_lake_bucket_suffix         = "lake"
-lambda_package_s3_key           = "artifacts/lambda/raw_ingestion.zip"
-lambda_log_retention_in_days    = 30
-step_function_log_retention_in_days = 30
-bedrock_model_id                = "bedrock-model-id"
-force_destroy                   = false
+project_name                         = "invoice-pipeline"
+environment                          = "dev"
+owner                                = "data-engineering"
+aws_region                           = "us-east-1"
+artifact_bucket_suffix               = "artifacts"
+data_lake_bucket_suffix              = "lake"
+lambda_package_s3_key                = "artifacts/lambda/control_plane_bundle.zip"
+lambda_log_retention_in_days         = 30
+step_function_log_retention_in_days  = 30
+cloudwatch_namespace                 = "InvoicePipeline"
+bedrock_model_id                     = "bedrock-model-id"
+force_destroy                        = false
 
 tags = {
   CostCenter = "data-platform"

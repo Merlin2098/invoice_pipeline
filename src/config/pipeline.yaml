@@ -20,6 +20,7 @@ run:
 
 ocr:
   supported_extensions:
+    - .pdf
     - .png
     - .jpg
     - .jpeg
@@ -52,7 +53,9 @@ aws:
     normalize: invoice-pipeline-normalize-dev
     consolidate: invoice-pipeline-consolidate-dev
   lambda_handlers:
-    prevalidation: invoice-pipeline-prevalidation-dev
+    raw_dispatch: invoice-pipeline-raw-dispatch-dev
+    validate_input: invoice-pipeline-validate-input-dev
+    process_document: invoice-pipeline-process-document-dev
     publish_metrics: invoice-pipeline-publish-metrics-dev
   cloudwatch:
     log_group: /aws/invoice-pipeline/dev

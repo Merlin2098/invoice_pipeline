@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -8,11 +9,13 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_PATH = REPO_ROOT / "artifacts" / "data_platform_bundle.zip"
-INCLUDE_DIRS = [REPO_ROOT / "src"]
+ARTIFACT_PATH = REPO_ROOT / "artifacts" / "lambda" / "control_plane_bundle.zip"
+INCLUDE_DIRS = [REPO_ROOT / "src", REPO_ROOT / "specs"]
 CLOUD_REQUIREMENTS = REPO_ROOT / "requirements.cloud.txt"
+LAMBDA_REQUIREMENTS = REPO_ROOT / "requirements.lambda.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
+VENDORED_MODULES = ("yaml", "dateutil", "six")
 
 
 def detect_package_manager(selected: str) -> str:
@@ -28,6 +31,8 @@ def detect_package_manager(selected: str) -> str:
 
 
 def runtime_requirements_text(package_manager: str) -> str:
+    if LAMBDA_REQUIREMENTS.exists():
+        return LAMBDA_REQUIREMENTS.read_text(encoding="utf-8").strip() + "\n"
     if package_manager == "uv":
         result = subprocess.run(
             [
@@ -48,6 +53,35 @@ def runtime_requirements_text(package_manager: str) -> str:
     return CLOUD_REQUIREMENTS.read_text(encoding="utf-8").strip() + "\n"
 
 
+def _module_origin(module_name: str) -> Path:
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
+        raise RuntimeError(
+            f"Could not resolve installed module '{module_name}'. Run the environment setup before packaging."
+        )
+    if spec.submodule_search_locations:
+        return Path(next(iter(spec.submodule_search_locations)))
+    return Path(spec.origin)
+
+
+def add_vendor_dependencies(archive: ZipFile) -> None:
+    added: set[Path] = set()
+    for module_name in VENDORED_MODULES:
+        origin = _module_origin(module_name)
+        if origin in added:
+            continue
+        added.add(origin)
+        if origin.is_dir():
+            for file_path in sorted(origin.rglob("*")):
+                if file_path.is_dir():
+                    continue
+                if "__pycache__" in file_path.parts or file_path.suffix == ".pyc":
+                    continue
+                archive.write(file_path, file_path.relative_to(origin.parent))
+        else:
+            archive.write(origin, origin.name)
+
+
 def build_bundle(package_manager: str) -> Path:
     ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(ARTIFACT_PATH, "w", compression=ZIP_DEFLATED) as archive:
@@ -61,7 +95,7 @@ def build_bundle(package_manager: str) -> Path:
                     continue
                 if file_path.is_file():
                     archive.write(file_path, file_path.relative_to(REPO_ROOT))
-        # Ship a resolved cloud runtime requirements file in the bundle.
+        add_vendor_dependencies(archive)
         archive.writestr("requirements.txt", runtime_requirements_text(package_manager))
     return ARTIFACT_PATH
 

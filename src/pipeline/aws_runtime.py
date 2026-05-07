@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.pipeline.quality import build_aws_silver_document
+from src.pipeline.quality import create_failed_document
 from src.pipeline.run_context import build_storage_key
 
 
@@ -98,9 +99,38 @@ class AwsPipelineRunner:
         self.bronze_prefix = bronze_prefix
 
     def process_document(self, request: AwsPipelineRequest) -> dict[str, Any]:
-        textract_response = self.textract.analyze_expense(request.source_s3_key)
         document_id = Path(request.source_file_name).stem
         bronze_key = build_storage_key(self.bronze_prefix, request.run_id, f"{document_id}.json")
+        try:
+            textract_response = self.textract.analyze_expense(request.source_s3_key)
+        except Exception as exc:
+            self.object_store.write_json(
+                bronze_key,
+                {
+                    "run_id": request.run_id,
+                    "document_id": document_id,
+                    "source_s3_key": request.source_s3_key,
+                    "source_file_name": request.source_file_name,
+                    "textract_job_id": None,
+                    "textract_response_s3_key": bronze_key,
+                    "textract_response": {},
+                    "extraction_engine": "textract_analyze_expense",
+                    "extraction_timestamp": request.created_at,
+                    "status": "failed",
+                    "error_message": str(exc),
+                },
+            )
+            return create_failed_document(
+                run_id=request.run_id,
+                document_id=document_id,
+                source_s3_key=request.source_s3_key,
+                source_file_name=request.source_file_name,
+                extraction_engine="textract_analyze_expense",
+                normalization_engine="bedrock" if self.bedrock else "textract_only",
+                llm_model_id="bedrock-model-id" if self.bedrock else None,
+                created_at=request.created_at,
+                failure_flags=["textract_request_failed"],
+            )
         self.object_store.write_json(
             bronze_key,
             {
@@ -120,7 +150,10 @@ class AwsPipelineRunner:
 
         candidate = extract_expense_candidates(textract_response)
         if self.bedrock and should_use_bedrock(candidate):
-            candidate.update(self.bedrock.normalize(candidate))
+            try:
+                candidate.update(self.bedrock.normalize(candidate))
+            except Exception:
+                candidate.setdefault("quality_flags", []).append("bedrock_request_failed")
 
         return build_aws_silver_document(
             candidate,

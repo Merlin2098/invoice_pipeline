@@ -48,37 +48,52 @@ output "errors_path_template" {
   value       = "s3://${module.data_lake_bucket.bucket_name}/${local.errors_prefix}/"
 }
 
-output "raw_ingestion_lambda_name" {
-  description = "Placeholder Lambda function name for raw upload control."
-  value       = module.raw_ingestion_lambda.lambda_name
+output "raw_dispatch_lambda_name" {
+  description = "Lambda function name that receives raw S3 upload notifications."
+  value       = module.raw_dispatch_lambda.lambda_name
 }
 
-output "raw_ingestion_lambda_arn" {
-  description = "Placeholder Lambda function ARN for raw upload control."
-  value       = module.raw_ingestion_lambda.lambda_arn
+output "raw_dispatch_lambda_arn" {
+  description = "Lambda function ARN that receives raw S3 upload notifications."
+  value       = module.raw_dispatch_lambda.lambda_arn
+}
+
+output "validate_input_lambda_name" {
+  description = "Lambda function name used by Step Functions to validate inputs."
+  value       = module.validate_input_lambda.lambda_name
+}
+
+output "process_document_lambda_name" {
+  description = "Lambda function name used by Step Functions to call Textract and write bronze/silver outputs."
+  value       = module.process_document_lambda.lambda_name
+}
+
+output "publish_metrics_lambda_name" {
+  description = "Lambda function name used by Step Functions to publish CloudWatch metrics."
+  value       = module.publish_metrics_lambda.lambda_name
 }
 
 output "state_machine_name" {
-  description = "Foundation Step Functions state machine name."
+  description = "Document pipeline Step Functions state machine name."
   value       = module.invoice_pipeline_state_machine.state_machine_name
 }
 
 output "state_machine_arn" {
-  description = "Foundation Step Functions state machine ARN."
+  description = "Document pipeline Step Functions state machine ARN."
   value       = module.invoice_pipeline_state_machine.state_machine_arn
 }
 
 output "step_function_role_name" {
-  description = "IAM role name used by the Step Functions foundation state machine."
+  description = "IAM role name used by the Step Functions state machine."
   value       = module.invoice_pipeline_state_machine.role_name
 }
 
 output "textract_policy_arn" {
-  description = "Managed policy ARN reserved for future Textract integration."
+  description = "Managed policy ARN attached to the processing role for Textract access."
   value       = module.textract_permissions.policy_arn
 }
 
 output "bedrock_policy_arn" {
-  description = "Managed policy ARN reserved for future Bedrock integration."
+  description = "Managed policy ARN attached to the processing role for future Bedrock access."
   value       = module.bedrock_permissions.policy_arn
 }

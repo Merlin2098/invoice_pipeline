@@ -1,19 +1,62 @@
 {
-  "Comment": "Foundation state machine for the Terraform MVP baseline. Detailed pipeline steps will be added in a later phase.",
-  "StartAt": "InvokeRawIngestionControl",
+  "Comment": "Document processing state machine for the AWS MVP baseline.",
+  "StartAt": "ValidateInput",
   "States": {
-    "InvokeRawIngestionControl": {
+    "ValidateInput": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${raw_ingestion_lambda_arn}",
+        "FunctionName": "${validate_input_lambda_arn}",
         "Payload.$": "$"
       },
-      "ResultPath": "$.control",
-      "Next": "FoundationReady"
+      "ResultPath": "$.validation",
+      "Next": "InputValid?"
     },
-    "FoundationReady": {
+    "InputValid?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validation.Payload.valid",
+          "BooleanEquals": true,
+          "Next": "ProcessDocument"
+        }
+      ],
+      "Default": "ValidationFailed"
+    },
+    "ProcessDocument": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${process_document_lambda_arn}",
+        "Payload": {
+          "run_id.$": "$.validation.Payload.run_id",
+          "source_s3_key.$": "$.validation.Payload.source_s3_key",
+          "source_file_name.$": "$.validation.Payload.source_file_name",
+          "created_at.$": "$.validation.Payload.created_at"
+        }
+      },
+      "ResultPath": "$.processing",
+      "Next": "PublishRunMetrics"
+    },
+    "PublishRunMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${publish_metrics_lambda_arn}",
+        "Payload": {
+          "run_id.$": "$.processing.Payload.run_id",
+          "metrics.$": "$.processing.Payload.metrics"
+        }
+      },
+      "ResultPath": "$.metrics",
+      "Next": "PipelineCompleted"
+    },
+    "PipelineCompleted": {
       "Type": "Succeed"
+    },
+    "ValidationFailed": {
+      "Type": "Fail",
+      "Cause": "Input validation failed"
     }
   }
 }

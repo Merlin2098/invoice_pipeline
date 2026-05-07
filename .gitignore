@@ -30,6 +30,7 @@ logs/
 
 # Custom artifacts (zips, outputs)
 artifacts/*.zip
+artifacts/**/*.zip
 
 # =========================
 # 🏗️ Terraform

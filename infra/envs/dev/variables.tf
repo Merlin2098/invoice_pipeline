@@ -55,31 +55,55 @@ variable "force_destroy" {
 }
 
 variable "lambda_package_s3_key" {
-  description = "S3 key of the placeholder Lambda deployment package in the artifact bucket."
+  description = "S3 key of the Lambda deployment package in the artifact bucket."
   type        = string
-  default     = "artifacts/lambda/raw_ingestion.zip"
+  default     = "artifacts/lambda/control_plane_bundle.zip"
 }
 
 variable "lambda_runtime" {
-  description = "Runtime for the placeholder ingestion Lambda."
+  description = "Runtime for all control-plane Lambdas."
   type        = string
   default     = "python3.11"
 }
 
 variable "lambda_handler" {
-  description = "Handler for the placeholder ingestion Lambda."
+  description = "Deprecated generic Lambda handler. Use the dedicated handler variables below."
   type        = string
-  default     = "src.aws.lambda_handlers.control_plane.handle_raw_ingestion"
+  default     = "src.aws.lambda_handlers.control_plane.start_raw_ingestion"
+}
+
+variable "raw_dispatch_handler" {
+  description = "Handler for the raw S3 dispatcher Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.start_raw_ingestion"
+}
+
+variable "validate_input_handler" {
+  description = "Handler for the validation Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.validate_input"
+}
+
+variable "process_document_handler" {
+  description = "Handler for the document processing Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.process_document"
+}
+
+variable "publish_metrics_handler" {
+  description = "Handler for the metrics publishing Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.publish_run_metrics"
 }
 
 variable "lambda_timeout_seconds" {
-  description = "Timeout for the placeholder ingestion Lambda."
+  description = "Timeout for the control-plane Lambdas."
   type        = number
   default     = 60
 }
 
 variable "lambda_memory_size" {
-  description = "Memory size for the placeholder ingestion Lambda."
+  description = "Memory size for the control-plane Lambdas."
   type        = number
   default     = 256
 }
@@ -143,6 +167,12 @@ variable "bedrock_model_id" {
   description = "Bedrock model ID reserved for future structured normalization."
   type        = string
   default     = "bedrock-model-id"
+}
+
+variable "cloudwatch_namespace" {
+  description = "CloudWatch namespace used by the metrics publisher Lambda."
+  type        = string
+  default     = "InvoicePipeline"
 }
 
 variable "tags" {
