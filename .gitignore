@@ -42,9 +42,19 @@ artifacts/**/*.zip
 # State files
 *.tfstate
 *.tfstate.*
+*.tfplan
+tfplan
+tfplan-artifact
 
 # Crash logs
 crash.log
+
+# Terraform local backend / overrides
+backend.tf
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # =========================
 # 🔐 Terraform variables (SENSITIVE)
