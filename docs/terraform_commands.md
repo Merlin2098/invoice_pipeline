@@ -39,5 +39,13 @@ terraform -chdir=infra/envs/dev output
 ```
 
 ```powershell
+terraform -chdir=infra/envs/dev plan -destroy -var-file="terraform.tfvars" -out="tfplan-destroy"
+```
+
+```powershell
+terraform -chdir=infra/envs/dev apply "tfplan-destroy"
+```
+
+```powershell
 terraform -chdir=infra/envs/dev destroy -var-file="terraform.tfvars"
 ```
