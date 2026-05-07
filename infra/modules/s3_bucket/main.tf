@@ -58,11 +58,3 @@ resource "aws_s3_bucket_policy" "this" {
   bucket = aws_s3_bucket.this.id
   policy = var.policy_json
 }
-
-resource "aws_s3_object" "prefix_marker" {
-  for_each = toset(var.create_object_prefixes)
-
-  bucket  = aws_s3_bucket.this.id
-  key     = "${trim(each.value, "/")}/"
-  content = ""
-}
