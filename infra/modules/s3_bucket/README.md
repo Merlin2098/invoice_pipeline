@@ -4,12 +4,10 @@ Reusable S3 bucket module for the Terraform MVP foundation.
 
 ## Features
 
-- Versioning enabled by default
 - AES256 server-side encryption
 - Public access blocked
 - Optional lifecycle rule placeholders
 - Optional bucket policy
-- Optional prefix marker objects for canonical lake paths
 
 ## Inputs
 

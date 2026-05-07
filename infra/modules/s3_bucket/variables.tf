@@ -3,12 +3,6 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "enable_versioning" {
-  description = "Enable S3 object versioning."
-  type        = bool
-  default     = true
-}
-
 variable "force_destroy" {
   description = "Allow bucket deletion even when objects remain. Intended for dev-only usage."
   type        = bool
