@@ -30,7 +30,6 @@ logs/
 
 # Custom artifacts (zips, outputs)
 artifacts/*.zip
-artifacts/**/*.zip
 
 # =========================
 # 🏗️ Terraform
@@ -83,7 +82,11 @@ override.tf.json
 .DS_Store
 Thumbs.db
 
+#Local project artifacts
 .ai/
-data/
+
+# Missing entries from template .gitignore
 ai/
-docs/prompts/
+data/
+/prompt/
+.claude/settings.local.json

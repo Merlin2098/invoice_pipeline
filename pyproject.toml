@@ -22,8 +22,6 @@ local = [
     "pathspec",
     "polars",
     "psycopg2-binary",
-    "pyside6",
-    "pyinstaller",
     "setuptools",
     "wheel",
     "xlsxwriter",
