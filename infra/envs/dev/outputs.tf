@@ -97,3 +97,8 @@ output "bedrock_policy_arn" {
   description = "Managed policy ARN attached to the processing role for future Bedrock access."
   value       = module.bedrock_permissions.policy_arn
 }
+
+output "budget_name" {
+  description = "AWS Budget name tracking monthly cost for this project."
+  value       = aws_budgets_budget.project.name
+}

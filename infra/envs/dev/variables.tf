@@ -180,3 +180,8 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "budget_alert_email" {
+  description = "Email address that receives AWS Budget threshold notifications."
+  type        = string
+}
