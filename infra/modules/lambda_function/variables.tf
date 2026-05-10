@@ -64,6 +64,13 @@ variable "environment_variables" {
   default     = {}
 }
 
+variable "source_code_hash" {
+  description = "Base64-encoded SHA256 hash of the deployment package. Forces Lambda update when the ZIP changes."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "log_group_name" {
   description = "Optional externally managed log group name to depend on before creating the function."
   type        = string

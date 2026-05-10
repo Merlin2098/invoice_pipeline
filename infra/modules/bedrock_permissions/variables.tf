@@ -8,6 +8,11 @@ variable "aws_region" {
   type        = string
 }
 
+variable "account_id" {
+  description = "AWS account ID used to build the inference profile ARN."
+  type        = string
+}
+
 variable "model_id" {
   description = "Bedrock model identifier."
   type        = string

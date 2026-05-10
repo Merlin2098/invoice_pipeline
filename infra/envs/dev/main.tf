@@ -242,10 +242,11 @@ module "publish_metrics_role" {
 module "raw_dispatch_lambda" {
   source = "../../modules/lambda_function"
 
-  function_name  = "${local.name_prefix}-raw-dispatch"
-  role_arn       = module.raw_dispatch_role.role_arn
-  s3_bucket      = module.artifact_bucket.bucket_name
-  s3_key         = var.lambda_package_s3_key
+  function_name    = "${local.name_prefix}-raw-dispatch"
+  role_arn         = module.raw_dispatch_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
   runtime        = var.lambda_runtime
   handler        = var.raw_dispatch_handler
   timeout        = var.lambda_timeout_seconds
@@ -262,10 +263,11 @@ module "raw_dispatch_lambda" {
 module "validate_input_lambda" {
   source = "../../modules/lambda_function"
 
-  function_name  = "${local.name_prefix}-validate-input"
-  role_arn       = module.validate_input_role.role_arn
-  s3_bucket      = module.artifact_bucket.bucket_name
-  s3_key         = var.lambda_package_s3_key
+  function_name    = "${local.name_prefix}-validate-input"
+  role_arn         = module.validate_input_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
   runtime        = var.lambda_runtime
   handler        = var.validate_input_handler
   timeout        = var.lambda_timeout_seconds
@@ -277,10 +279,11 @@ module "validate_input_lambda" {
 module "process_document_lambda" {
   source = "../../modules/lambda_function"
 
-  function_name  = "${local.name_prefix}-process-document"
-  role_arn       = module.process_document_role.role_arn
-  s3_bucket      = module.artifact_bucket.bucket_name
-  s3_key         = var.lambda_package_s3_key
+  function_name    = "${local.name_prefix}-process-document"
+  role_arn         = module.process_document_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
   runtime        = var.lambda_runtime
   handler        = var.process_document_handler
   timeout        = var.lambda_timeout_seconds
@@ -302,10 +305,11 @@ module "process_document_lambda" {
 module "publish_metrics_lambda" {
   source = "../../modules/lambda_function"
 
-  function_name  = "${local.name_prefix}-publish-metrics"
-  role_arn       = module.publish_metrics_role.role_arn
-  s3_bucket      = module.artifact_bucket.bucket_name
-  s3_key         = var.lambda_package_s3_key
+  function_name    = "${local.name_prefix}-publish-metrics"
+  role_arn         = module.publish_metrics_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
   runtime        = var.lambda_runtime
   handler        = var.publish_metrics_handler
   timeout        = var.lambda_timeout_seconds
@@ -345,6 +349,7 @@ module "bedrock_permissions" {
 
   name                 = "${local.name_prefix}-bedrock"
   aws_region           = var.aws_region
+  account_id           = data.aws_caller_identity.current.account_id
   model_id             = var.bedrock_model_id
   attach_to_role_names = [module.process_document_role.role_name]
   tags                 = local.common_tags

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -7,6 +8,8 @@ from typing import Any, Protocol
 from src.pipeline.quality import build_aws_silver_document
 from src.pipeline.quality import create_failed_document
 from src.pipeline.run_context import build_storage_key
+
+logger = logging.getLogger(__name__)
 
 
 class TextractExpenseExtractor(Protocol):
@@ -91,11 +94,13 @@ class AwsPipelineRunner:
         textract: TextractExpenseExtractor,
         object_store: ObjectStore,
         bedrock: BedrockNormalizer | None = None,
+        bedrock_model_id: str | None = None,
         bronze_prefix: str = "bronze/textract-json",
     ) -> None:
         self.textract = textract
         self.object_store = object_store
         self.bedrock = bedrock
+        self.bedrock_model_id = bedrock_model_id
         self.bronze_prefix = bronze_prefix
 
     def process_document(self, request: AwsPipelineRequest) -> dict[str, Any]:
@@ -152,7 +157,8 @@ class AwsPipelineRunner:
         if self.bedrock and should_use_bedrock(candidate):
             try:
                 candidate.update(self.bedrock.normalize(candidate))
-            except Exception:
+            except Exception as exc:
+                logger.exception("Bedrock normalization failed document_id=%s error=%s", document_id, exc)
                 candidate.setdefault("quality_flags", []).append("bedrock_request_failed")
 
         return build_aws_silver_document(
@@ -164,5 +170,5 @@ class AwsPipelineRunner:
             created_at=request.created_at,
             extraction_engine="textract_analyze_expense",
             normalization_engine="bedrock" if self.bedrock else "textract_only",
-            llm_model_id="bedrock-model-id" if self.bedrock else None,
+            llm_model_id=self.bedrock_model_id if self.bedrock else None,
         )

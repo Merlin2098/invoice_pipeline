@@ -164,9 +164,9 @@ variable "raw_trigger_suffix" {
 }
 
 variable "bedrock_model_id" {
-  description = "Bedrock model ID reserved for future structured normalization."
+  description = "Bedrock model ID used for structured normalization when Textract extraction is incomplete."
   type        = string
-  default     = "bedrock-model-id"
+  default     = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 }
 
 variable "cloudwatch_namespace" {

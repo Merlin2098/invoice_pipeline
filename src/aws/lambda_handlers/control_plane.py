@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote_plus
 
+from src.aws.bedrock_client import BedrockNormalizerClient
 from src.config.pipeline_config import load_pipeline_config
 from src.pipeline.aws_runtime import AwsPipelineRequest, AwsPipelineRunner
 from src.pipeline.quality import create_failed_document
 from src.pipeline.run_context import build_storage_key
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -263,10 +265,13 @@ def process_document(event: dict[str, Any], _context: Any = None) -> dict[str, A
     errors_prefix = _env("ERRORS_PREFIX", "errors")
 
     object_store = S3JsonStore(data_lake_bucket)
+    bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID")
+    bedrock = BedrockNormalizerClient(bedrock_model_id) if bedrock_model_id else None
     runner = AwsPipelineRunner(
         textract=TextractAnalyzeExpenseClient(data_lake_bucket),
         object_store=object_store,
-        bedrock=None,
+        bedrock=bedrock,
+        bedrock_model_id=bedrock_model_id,
         bronze_prefix=bronze_prefix,
     )
 

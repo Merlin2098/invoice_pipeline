@@ -1,8 +1,12 @@
 locals {
-  model_resource = coalesce(
-    var.model_arn_override,
-    "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.model_id}"
-  )
+  foundation_model_resource       = "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.model_id}"
+  inference_profile_resource      = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:inference-profile/${var.model_id}"
+  cross_region_inference_wildcard = "arn:aws:bedrock:*::foundation-model/*"
+  model_resources = var.model_arn_override != null ? [var.model_arn_override] : [
+    local.foundation_model_resource,
+    local.inference_profile_resource,
+    local.cross_region_inference_wildcard,
+  ]
 }
 
 data "aws_iam_policy_document" "this" {
@@ -12,7 +16,7 @@ data "aws_iam_policy_document" "this" {
       "bedrock:InvokeModel",
       "bedrock:InvokeModelWithResponseStream",
     ]
-    resources = [local.model_resource]
+    resources = local.model_resources
   }
 }
 
