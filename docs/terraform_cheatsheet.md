@@ -31,39 +31,39 @@ Run this before the first plan, and repeat it when providers, modules, or
 backend settings change.
 
 ```powershell
-terraform -chdir=infra init
+terraform -chdir=infra/envs/dev init
 ```
 
 This downloads providers and prepares the local `.terraform` directory.
 
 ## 3. Create Local Terraform Variables
 
-Create `infra\terraform.tfvars` from the committed example file:
+Create `infra\envs\dev\terraform.tfvars` from the committed example file:
 
 ```powershell
-Copy-Item infra\terraform.tfvars.example infra\terraform.tfvars
+Copy-Item infra\envs\dev\terraform.tfvars.example infra\envs\dev\terraform.tfvars
 ```
 
-Edit `infra\terraform.tfvars` only with non-secret values, such as project name,
+Edit `infra\envs\dev\terraform.tfvars` only with non-secret values, such as project name,
 environment, region, and tags. This file is ignored by Git.
 
 ## 4. Validate Terraform
 
 ```powershell
-terraform -chdir=infra fmt -check
-terraform -chdir=infra validate
+terraform -chdir=infra/envs/dev fmt -check
+terraform -chdir=infra/envs/dev validate
 ```
 
 ## 5. Create and Save a Plan
 
 ```powershell
-terraform -chdir=infra plan -var-file="terraform.tfvars" -out="tfplan"
+terraform -chdir=infra/envs/dev plan -var-file="terraform.tfvars" -out="tfplan"
 ```
 
 Review the saved plan in human-readable form:
 
 ```powershell
-terraform -chdir=infra show tfplan
+terraform -chdir=infra/envs/dev show tfplan
 ```
 
 ## 6. Apply the Saved Plan
@@ -71,7 +71,7 @@ terraform -chdir=infra show tfplan
 Apply only the saved plan you reviewed:
 
 ```powershell
-terraform -chdir=infra apply "tfplan"
+terraform -chdir=infra/envs/dev apply "tfplan"
 ```
 
 This creates or changes real AWS resources.
@@ -81,14 +81,14 @@ This creates or changes real AWS resources.
 First create and review a destroy plan:
 
 ```powershell
-terraform -chdir=infra plan -destroy -var-file="terraform.tfvars" -out="destroy.tfplan"
-terraform -chdir=infra show destroy.tfplan
+terraform -chdir=infra/envs/dev plan -destroy -var-file="terraform.tfvars" -out="destroy.tfplan"
+terraform -chdir=infra/envs/dev show destroy.tfplan
 ```
 
 Then apply the reviewed destroy plan:
 
 ```powershell
-terraform -chdir=infra apply "destroy.tfplan"
+terraform -chdir=infra/envs/dev apply "destroy.tfplan"
 ```
 
 This deletes the AWS resources managed by this Terraform state.
@@ -98,8 +98,8 @@ This deletes the AWS resources managed by this Terraform state.
 After apply or destroy, remove saved plan files:
 
 ```powershell
-Remove-Item infra\tfplan -ErrorAction SilentlyContinue
-Remove-Item infra\destroy.tfplan -ErrorAction SilentlyContinue
+Remove-Item infra\envs\dev\tfplan -ErrorAction SilentlyContinue
+Remove-Item infra\envs\dev\destroy.tfplan -ErrorAction SilentlyContinue
 ```
 
 ## 9. Clear Credentials From the Session
