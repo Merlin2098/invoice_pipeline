@@ -116,6 +116,38 @@ data "aws_iam_policy_document" "dispatcher_start_execution" {
   }
 }
 
+data "aws_iam_policy_document" "raw_dispatch_sqs_consume" {
+  statement {
+    sid = "ConsumeSqsMessages"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:ChangeMessageVisibility",
+    ]
+    resources = [module.raw_ingestion_queue.queue_arn]
+  }
+}
+
+data "aws_iam_policy_document" "s3_to_sqs_send" {
+  statement {
+    sid       = "AllowS3SendMessage"
+    actions   = ["sqs:SendMessage"]
+    resources = [module.raw_ingestion_queue.queue_arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [module.data_lake_bucket.bucket_arn]
+    }
+  }
+}
+
 data "aws_iam_policy_document" "process_document_data_lake_access" {
   statement {
     sid       = "ReadRawObjects"
@@ -136,6 +168,14 @@ data "aws_iam_policy_document" "process_document_data_lake_access" {
         "${local.raw_prefix}/*",
       ]
     }
+  }
+
+  statement {
+    sid     = "CheckSilverIdempotency"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${module.data_lake_bucket.bucket_arn}/${local.silver_valid_prefix}/*",
+    ]
   }
 
   statement {
@@ -175,6 +215,19 @@ data "aws_iam_policy_document" "step_function_lambda_invoke" {
   }
 }
 
+module "raw_ingestion_queue" {
+  source = "../../modules/sqs_queue"
+
+  name                       = "${local.name_prefix}-raw-ingestion"
+  visibility_timeout_seconds = 6 * var.lambda_timeout_seconds
+  tags                       = local.common_tags
+}
+
+resource "aws_sqs_queue_policy" "raw_ingestion" {
+  queue_url = module.raw_ingestion_queue.queue_url
+  policy    = data.aws_iam_policy_document.s3_to_sqs_send.json
+}
+
 module "invoice_pipeline_state_machine" {
   source = "../../modules/step_function"
 
@@ -200,6 +253,7 @@ module "raw_dispatch_role" {
   inline_policies = {
     logging         = data.aws_iam_policy_document.lambda_logging.json
     start_execution = data.aws_iam_policy_document.dispatcher_start_execution.json
+    sqs_consume     = data.aws_iam_policy_document.raw_dispatch_sqs_consume.json
   }
   tags = local.common_tags
 }
@@ -321,16 +375,30 @@ module "publish_metrics_lambda" {
   tags = local.common_tags
 }
 
-module "raw_upload_notification" {
-  source = "../../modules/s3_notification"
+resource "aws_s3_bucket_notification" "raw_upload" {
+  bucket = module.data_lake_bucket.bucket_id
 
-  bucket_id           = module.data_lake_bucket.bucket_id
-  bucket_arn          = module.data_lake_bucket.bucket_arn
-  lambda_arn          = module.raw_dispatch_lambda.lambda_arn
-  lambda_name         = module.raw_dispatch_lambda.lambda_name
-  filter_prefix       = "${local.raw_prefix}/"
-  filter_suffix       = var.raw_trigger_suffix
-  statement_id_prefix = "${local.name_prefix}-raw-upload"
+  queue {
+    queue_arn     = module.raw_ingestion_queue.queue_arn
+    events        = ["s3:ObjectCreated:*"]
+    filter_prefix = "${local.raw_prefix}/"
+    filter_suffix = var.raw_trigger_suffix
+  }
+
+  depends_on = [aws_sqs_queue_policy.raw_ingestion]
+}
+
+resource "aws_lambda_event_source_mapping" "raw_dispatch_sqs" {
+  event_source_arn        = module.raw_ingestion_queue.queue_arn
+  function_name           = module.raw_dispatch_lambda.lambda_arn
+  batch_size              = 1
+  function_response_types = ["ReportBatchItemFailures"]
+
+  scaling_config {
+    maximum_concurrency = 5
+  }
+
+  depends_on = [module.raw_dispatch_role]
 }
 
 module "textract_permissions" {

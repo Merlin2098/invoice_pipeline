@@ -73,6 +73,21 @@ def _s3_event_records(event: dict[str, Any]) -> list[dict[str, str]]:
     return records
 
 
+def _unwrap_sqs_records(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extrae S3 Records embebidos en los bodies de mensajes SQS."""
+    unwrapped: list[dict[str, Any]] = []
+    for record in event.get("Records", []) or []:
+        if record.get("eventSource") == "aws:sqs":
+            try:
+                body = json.loads(record.get("body") or "{}")
+                unwrapped.extend(body.get("Records", []))
+            except (json.JSONDecodeError, AttributeError):
+                logger.warning("Could not parse SQS record body: %s", record.get("body"))
+        else:
+            unwrapped.append(record)
+    return unwrapped
+
+
 def _direct_record(event: dict[str, Any]) -> dict[str, str]:
     source_s3_key = str(event.get("source_s3_key") or "")
     source_file_name = str(event.get("source_file_name") or Path(source_s3_key).name)
@@ -163,7 +178,7 @@ def validate_input(event: dict[str, Any], _context: Any = None) -> dict[str, Any
 
 
 def start_raw_ingestion(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
-    records = _s3_event_records(event)
+    records = _s3_event_records({"Records": _unwrap_sqs_records(event)})
     if not records:
         records = [_direct_record(event)]
 
@@ -263,6 +278,32 @@ def process_document(event: dict[str, Any], _context: Any = None) -> dict[str, A
     silver_valid_prefix = _env("SILVER_VALID_PREFIX", "silver/valid")
     silver_rejected_prefix = _env("SILVER_REJECTED_PREFIX", "silver/rejected")
     errors_prefix = _env("ERRORS_PREFIX", "errors")
+
+    document_id = Path(source_file_name).stem
+    silver_valid_key = build_storage_key(silver_valid_prefix, run_id, f"{document_id}.json")
+    boto3 = _optional_boto3()
+    if boto3 is not None:
+        _s3_check = boto3.client("s3")
+        try:
+            _s3_check.head_object(Bucket=data_lake_bucket, Key=silver_valid_key)
+            logger.info(
+                "Skipping already-processed document run_id=%s source_s3_key=%s",
+                run_id,
+                source_s3_key,
+            )
+            return {
+                "run_id": run_id,
+                "source_s3_key": source_s3_key,
+                "source_file_name": source_file_name,
+                "document_id": document_id,
+                "processing_status": "skipped",
+                "quality_status": "skipped",
+                "output_s3_key": silver_valid_key,
+                "metrics": [],
+            }
+        except _s3_check.exceptions.ClientError as exc:
+            if exc.response["Error"]["Code"] not in ("404", "NoSuchKey"):
+                raise
 
     object_store = S3JsonStore(data_lake_bucket)
     bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID")

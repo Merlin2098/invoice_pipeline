@@ -102,3 +102,18 @@ output "budget_name" {
   description = "AWS Budget name tracking monthly cost for this project."
   value       = aws_budgets_budget.project.name
 }
+
+output "raw_ingestion_queue_url" {
+  description = "FIFO queue URL that buffers S3 raw upload notifications."
+  value       = module.raw_ingestion_queue.queue_url
+}
+
+output "raw_ingestion_queue_arn" {
+  description = "FIFO queue ARN."
+  value       = module.raw_ingestion_queue.queue_arn
+}
+
+output "raw_ingestion_dlq_url" {
+  description = "Dead letter queue URL for failed raw ingestion messages."
+  value       = module.raw_ingestion_queue.dlq_url
+}
