@@ -13,7 +13,7 @@ Return only JSON with this shape:
   "document_type": "invoice|receipt|contribution|credit_note|unknown",
   "vendor_name": "string|null",
   "document_date": "YYYY-MM-DD|null",
-  "total_amount": 0.0,
+  "total_amount": "number|null",
   "currency": "PEN|USD|EUR|null",
   "confidence_summary": {
     "document_type": 0.0,
@@ -34,4 +34,5 @@ Rules:
 4. If multiple vendors exist, choose the strongest candidate and explain via
    `reasoning_flags`.
 5. Return `null` for any field without sufficient evidence.
+6. Never return `0.0` for `total_amount` unless the document explicitly states a zero amount. Use `null` when the amount is not found or unreadable.
 
