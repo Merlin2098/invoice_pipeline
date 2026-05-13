@@ -67,15 +67,33 @@ Start-Sleep -Seconds $WaitSeconds
 # ---------------------------------------------------------------------------
 Write-Host "`n[3/8] Consultando Step Functions..." -ForegroundColor Cyan
 
-$succeeded = aws stepfunctions list-executions --state-machine-arn $SF_ARN --status-filter SUCCEEDED --query "length(executions)" --output text
-$failed    = aws stepfunctions list-executions --state-machine-arn $SF_ARN --status-filter FAILED    --query "length(executions)" --output text
-$running   = aws stepfunctions list-executions --state-machine-arn $SF_ARN --status-filter RUNNING   --query "length(executions)" --output text
+function Get-SfnExecutionsByStatus {
+    param([string]$Status)
+
+    $json = aws stepfunctions list-executions `
+        --state-machine-arn $SF_ARN `
+        --status-filter $Status `
+        --query "executions[].{name:name,start:startDate,arn:executionArn}" `
+        --output json
+    return @($json | ConvertFrom-Json)
+}
+
+$succeeded_list = Get-SfnExecutionsByStatus "SUCCEEDED"
+$failed_list    = Get-SfnExecutionsByStatus "FAILED"
+$running_list   = Get-SfnExecutionsByStatus "RUNNING"
+
+$current_succeeded = @($succeeded_list | Where-Object { $_.name -like "*$RunId*" })
+$current_failed    = @($failed_list | Where-Object { $_.name -like "*$RunId*" })
+$current_running   = @($running_list | Where-Object { $_.name -like "*$RunId*" })
 
 $summary = @"
 run_id:    $RunId
-succeeded: $succeeded
-failed:    $failed
-running:   $running
+succeeded_this_run: $($current_succeeded.Count)
+failed_this_run:    $($current_failed.Count)
+running_this_run:   $($current_running.Count)
+total_succeeded_visible: $($succeeded_list.Count)
+total_failed_visible:    $($failed_list.Count)
+total_running_visible:   $($running_list.Count)
 timestamp: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
 "@
 $summary | Tee-Object "$LOG_DIR/summary.txt"
@@ -85,15 +103,7 @@ $summary | Tee-Object "$LOG_DIR/summary.txt"
 # ---------------------------------------------------------------------------
 Write-Host "`n[4/8] Recopilando fallos del run actual..." -ForegroundColor Cyan
 
-$failed_json = aws stepfunctions list-executions `
-    --state-machine-arn $SF_ARN `
-    --status-filter FAILED `
-    --query "executions[].{name:name,start:startDate,arn:executionArn}" `
-    --output json
-
-$failed_json | Out-File "$LOG_DIR/failed_executions.json"
-$failed_list = $failed_json | ConvertFrom-Json
-$current_failed = @($failed_list | Where-Object { $_.name -like "*$RunId*" })
+$current_failed | ConvertTo-Json | Out-File "$LOG_DIR/failed_executions.json"
 
 Write-Host "  Fallos del run actual: $($current_failed.Count)"
 
@@ -186,12 +196,12 @@ Write-Host "`n[7/8] Descargando logs CloudWatch..." -ForegroundColor Cyan
 $start_ms = [DateTimeOffset]::UtcNow.AddMinutes(-30).ToUnixTimeMilliseconds()
 
 $cw_groups = @{
-    "lambda_process_document_errors"  = @{ group = "/aws/lambda/invoice-pipeline-dev-process-document"; filter = "ERROR" }
-    "lambda_extract_ocr_errors"       = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "ERROR" }
-    "lambda_enrich_llm_errors"        = @{ group = "/aws/lambda/invoice-pipeline-dev-enrich-llm";        filter = "ERROR" }
-    "lambda_raw_dispatch_errors"      = @{ group = "/aws/lambda/invoice-pipeline-dev-raw-dispatch";      filter = "ERROR" }
-    "lambda_validate_input_errors"    = @{ group = "/aws/lambda/invoice-pipeline-dev-validate-input";    filter = "ERROR" }
-    "lambda_idempotency_skips"        = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "skipped" }
+    "lambda_process_document_errors"  = @{ group = "/aws/lambda/invoice-pipeline-dev-process-document"; filter = "`"ERROR`" `"$RunId`"" }
+    "lambda_extract_ocr_errors"       = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "`"ERROR`" `"$RunId`"" }
+    "lambda_enrich_llm_errors"        = @{ group = "/aws/lambda/invoice-pipeline-dev-enrich-llm";        filter = "`"ERROR`" `"$RunId`"" }
+    "lambda_raw_dispatch_errors"      = @{ group = "/aws/lambda/invoice-pipeline-dev-raw-dispatch";      filter = "`"ERROR`" `"$RunId`"" }
+    "lambda_validate_input_errors"    = @{ group = "/aws/lambda/invoice-pipeline-dev-validate-input";    filter = "`"ERROR`" `"$RunId`"" }
+    "lambda_idempotency_skips"        = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "`"skipped`" `"$RunId`"" }
 }
 
 foreach ($key in $cw_groups.Keys) {
@@ -212,9 +222,9 @@ Write-Host "  Logs guardados."
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host " RESULTADO DEL RUN: $RunId" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " SUCCEEDED (total SF): $succeeded"
-Write-Host " FAILED    (total SF): $failed"
+Write-Host " SUCCEEDED (este run): $($current_succeeded.Count)"
 Write-Host " FAILED    (este run): $($current_failed.Count)"
+Write-Host " RUNNING   (este run): $($current_running.Count)"
 Write-Host " bronze:               $bronze"
 Write-Host " silver/valid:         $valid"
 Write-Host " silver/rejected:      $rejected"
