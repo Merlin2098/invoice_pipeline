@@ -11,9 +11,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------------------
+# [0/8] Precheck runtime/IAM/event wiring
+# ---------------------------------------------------------------------------
+Write-Host "`n[0/8] Ejecutando precheck de smoke..." -ForegroundColor Cyan
+& "$PSScriptRoot\smoke-precheck.ps1"
+
+# ---------------------------------------------------------------------------
 # Constantes del entorno (leidas desde Terraform outputs)
 # ---------------------------------------------------------------------------
-Write-Host "`n[1/7] Leyendo outputs de Terraform..." -ForegroundColor Cyan
+Write-Host "`n[1/8] Leyendo outputs de Terraform..." -ForegroundColor Cyan
 Push-Location "infra/envs/dev"
 $tf = terraform output -json | ConvertFrom-Json
 Pop-Location
@@ -51,15 +57,15 @@ New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 Write-Host "[logs]   $LOG_DIR"
 
 # ---------------------------------------------------------------------------
-# [2/7] Esperar a que el pipeline termine
+# [2/8] Esperar a que el pipeline termine
 # ---------------------------------------------------------------------------
-Write-Host "`n[2/7] Esperando $WaitSeconds segundos para que Step Functions complete..." -ForegroundColor Cyan
+Write-Host "`n[2/8] Esperando $WaitSeconds segundos para que Step Functions complete..." -ForegroundColor Cyan
 Start-Sleep -Seconds $WaitSeconds
 
 # ---------------------------------------------------------------------------
-# [3/7] Estado de Step Functions
+# [3/8] Estado de Step Functions
 # ---------------------------------------------------------------------------
-Write-Host "`n[3/7] Consultando Step Functions..." -ForegroundColor Cyan
+Write-Host "`n[3/8] Consultando Step Functions..." -ForegroundColor Cyan
 
 $succeeded = aws stepfunctions list-executions --state-machine-arn $SF_ARN --status-filter SUCCEEDED --query "length(executions)" --output text
 $failed    = aws stepfunctions list-executions --state-machine-arn $SF_ARN --status-filter FAILED    --query "length(executions)" --output text
@@ -75,9 +81,9 @@ timestamp: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
 $summary | Tee-Object "$LOG_DIR/summary.txt"
 
 # ---------------------------------------------------------------------------
-# [4/7] Detalle de ejecuciones fallidas del run actual
+# [4/8] Detalle de ejecuciones fallidas del run actual
 # ---------------------------------------------------------------------------
-Write-Host "`n[4/7] Recopilando fallos del run actual..." -ForegroundColor Cyan
+Write-Host "`n[4/8] Recopilando fallos del run actual..." -ForegroundColor Cyan
 
 $failed_json = aws stepfunctions list-executions `
     --state-machine-arn $SF_ARN `
@@ -120,9 +126,9 @@ if ($current_failed.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# [5/7] Conteo S3 por capa
+# [5/8] Conteo S3 por capa
 # ---------------------------------------------------------------------------
-Write-Host "`n[5/7] Contando objetos en S3..." -ForegroundColor Cyan
+Write-Host "`n[5/8] Contando objetos en S3..." -ForegroundColor Cyan
 
 function Count-S3 ($uri) {
     $result = aws s3 ls $uri --recursive 2>$null
@@ -146,9 +152,9 @@ total procesado: $($valid + $rejected + $errors_s3) / $(($valid + $rejected + $e
 $s3_summary | Tee-Object "$LOG_DIR/s3_counts.txt"
 
 # ---------------------------------------------------------------------------
-# [6/7] Cola SQS y DLQ
+# [6/8] Cola SQS y DLQ
 # ---------------------------------------------------------------------------
-Write-Host "`n[6/7] Estado de colas SQS..." -ForegroundColor Cyan
+Write-Host "`n[6/8] Estado de colas SQS..." -ForegroundColor Cyan
 
 $queue_attrs = aws sqs get-queue-attributes `
     --queue-url $QUEUE_URL `
@@ -174,16 +180,18 @@ if ([int]$dlq_count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# [7/7] Logs CloudWatch (errores + idempotencia)
+# [7/8] Logs CloudWatch (errores + idempotencia)
 # ---------------------------------------------------------------------------
-Write-Host "`n[7/7] Descargando logs CloudWatch..." -ForegroundColor Cyan
+Write-Host "`n[7/8] Descargando logs CloudWatch..." -ForegroundColor Cyan
 $start_ms = [DateTimeOffset]::UtcNow.AddMinutes(-30).ToUnixTimeMilliseconds()
 
 $cw_groups = @{
     "lambda_process_document_errors"  = @{ group = "/aws/lambda/invoice-pipeline-dev-process-document"; filter = "ERROR" }
+    "lambda_extract_ocr_errors"       = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "ERROR" }
+    "lambda_enrich_llm_errors"        = @{ group = "/aws/lambda/invoice-pipeline-dev-enrich-llm";        filter = "ERROR" }
     "lambda_raw_dispatch_errors"      = @{ group = "/aws/lambda/invoice-pipeline-dev-raw-dispatch";      filter = "ERROR" }
     "lambda_validate_input_errors"    = @{ group = "/aws/lambda/invoice-pipeline-dev-validate-input";    filter = "ERROR" }
-    "lambda_idempotency_skips"        = @{ group = "/aws/lambda/invoice-pipeline-dev-process-document"; filter = "Skipping already-processed" }
+    "lambda_idempotency_skips"        = @{ group = "/aws/lambda/invoice-pipeline-dev-extract-ocr";       filter = "skipped" }
 }
 
 foreach ($key in $cw_groups.Keys) {
