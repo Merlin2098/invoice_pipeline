@@ -42,6 +42,7 @@ artifacts/*.zip
 *.tfstate
 *.tfstate.*
 *.tfplan
+*tfplan*
 tfplan
 tfplan-artifact
 tfplan-destroy
