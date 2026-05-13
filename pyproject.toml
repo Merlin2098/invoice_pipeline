@@ -40,6 +40,8 @@ dev-local = [
     "pytest",
     "pytest-cov",
     "ruff",
+    "pillow",
+    "pytesseract",
 ]
 
 dev-cloud = [
