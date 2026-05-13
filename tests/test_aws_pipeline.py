@@ -1,8 +1,12 @@
+import json
+import logging
 from typing import Any
 
 from src.aws.glue_jobs.consolidate_gold import consolidate_gold_documents, gold_metrics_preview
 from src.aws.glue_jobs.normalize_documents import normalize_bronze_documents
 from src.aws.lambda_handlers.control_plane import (
+    enrich_with_llm,
+    extract_ocr,
     process_document,
     publish_run_metrics,
     start_raw_ingestion,
@@ -84,6 +88,63 @@ def test_aws_runner_uses_bedrock_when_candidate_is_ambiguous() -> None:
     assert any(key.endswith("sample.json") for key in writes)
     assert result["vendor_name"] == "Acme"
     assert result["normalization_engine"] == "bedrock"
+
+
+def test_aws_runner_splits_ocr_and_enrichment() -> None:
+    writes: dict[str, Any] = {}
+
+    class FakeTextract:
+        def analyze_expense(self, source_s3_key: str) -> dict[str, Any]:
+            assert source_s3_key == "raw/run_id=run-1/sample.tif"
+            return {
+                "ExpenseDocuments": [
+                    {
+                        "SummaryFields": [
+                            {
+                                "Type": {"Text": "TOTAL"},
+                                "ValueDetection": {"Text": "$10.50", "Confidence": 98.0},
+                            }
+                        ]
+                    }
+                ]
+            }
+
+    class FakeStore:
+        def write_json(self, key: str, payload: dict[str, Any]) -> None:
+            writes[key] = payload
+
+    class FakeBedrock:
+        def normalize(self, payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "vendor_name": "Acme",
+                "document_date": "2024-01-01",
+                "currency": "USD",
+            }
+
+    request = AwsPipelineRequest(
+        run_id="run-1",
+        source_s3_key="raw/run_id=run-1/sample.tif",
+        source_file_name="sample.tif",
+        created_at="2026-05-05T00:00:00Z",
+    )
+    runner = AwsPipelineRunner(
+        textract=FakeTextract(),
+        object_store=FakeStore(),
+        bedrock=FakeBedrock(),
+        bedrock_model_id="test-model",
+    )
+
+    ocr = runner.run_ocr(request)
+    silver = runner.run_enrichment(
+        request,
+        candidate=dict(ocr["candidate"]),
+        bronze_key=str(ocr["bronze_s3_key"]),
+    )
+
+    assert ocr["bronze_s3_key"] == "bronze/textract-json/run_id=run-1/sample.json"
+    assert writes["bronze/textract-json/run_id=run-1/sample.json"]["status"] == "success"
+    assert silver["vendor_name"] == "Acme"
+    assert silver["normalization_engine"] == "bedrock"
 
 
 def test_glue_normalization_and_gold_preview_use_shared_contract() -> None:
@@ -174,6 +235,7 @@ def test_start_raw_ingestion_starts_step_function_from_s3_event(monkeypatch) -> 
     assert result["started"] == 1
     assert calls[0]["stateMachineArn"] == "arn:aws:states:::stateMachine:test"
     assert '"run_id": "run-1"' in calls[0]["input"]
+    assert '"execution_id": "run-1-sample-0"' in calls[0]["input"]
 
 
 def test_process_document_writes_valid_silver_output(monkeypatch) -> None:
@@ -223,6 +285,10 @@ def test_process_document_writes_valid_silver_output(monkeypatch) -> None:
         "src.aws.lambda_handlers.control_plane.AwsPipelineRunner",
         lambda **kwargs: FakeRunner(),
     )
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane._optional_boto3",
+        lambda: None,
+    )
     monkeypatch.setenv("DATA_LAKE_BUCKET", "lake-bucket")
     monkeypatch.setenv("BRONZE_PREFIX", "bronze/textract-json")
     monkeypatch.setenv("SILVER_VALID_PREFIX", "silver/valid")
@@ -241,3 +307,99 @@ def test_process_document_writes_valid_silver_output(monkeypatch) -> None:
     assert result["processing_status"] == "accepted"
     assert result["output_s3_key"] == "silver/valid/run_id=run-1/sample.json"
     assert "silver/valid/run_id=run-1/sample.json" in writes
+
+
+def test_split_handlers_write_bronze_then_silver(monkeypatch) -> None:
+    writes: dict[str, dict[str, Any]] = {}
+
+    class FakeStore:
+        def write_json(self, key: str, payload: dict[str, Any]) -> None:
+            writes[key] = payload
+
+        def read_json(self, key: str) -> dict[str, Any]:
+            return writes[key]
+
+    class FakeTextract:
+        def analyze_expense(self, source_s3_key: str) -> dict[str, Any]:
+            return {
+                "ExpenseDocuments": [
+                    {
+                        "SummaryFields": [
+                            {
+                                "Type": {"Text": "VENDOR_NAME"},
+                                "ValueDetection": {"Text": "Acme", "Confidence": 99.0},
+                            },
+                            {
+                                "Type": {"Text": "TOTAL"},
+                                "ValueDetection": {"Text": "$10.50", "Confidence": 98.0},
+                            },
+                        ]
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane.S3JsonStore",
+        lambda bucket_name: FakeStore(),
+    )
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane.TextractAnalyzeExpenseClient",
+        lambda bucket_name: FakeTextract(),
+    )
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane._optional_boto3",
+        lambda: None,
+    )
+    monkeypatch.setenv("DATA_LAKE_BUCKET", "lake-bucket")
+    monkeypatch.setenv("BRONZE_PREFIX", "bronze/textract-json")
+    monkeypatch.setenv("SILVER_VALID_PREFIX", "silver/valid")
+    monkeypatch.setenv("SILVER_REJECTED_PREFIX", "silver/rejected")
+    monkeypatch.setenv("ERRORS_PREFIX", "errors")
+    monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
+
+    ocr = extract_ocr(
+        {
+            "run_id": "run-1",
+            "execution_id": "exec-1",
+            "source_s3_key": "raw/run_id=run-1/sample.pdf",
+            "source_file_name": "sample.pdf",
+            "created_at": "2026-05-06T00:00:00Z",
+        }
+    )
+    enriched = enrich_with_llm(
+        {
+            "run_id": "run-1",
+            "execution_id": "exec-1",
+            "source_s3_key": "raw/run_id=run-1/sample.pdf",
+            "source_file_name": "sample.pdf",
+            "created_at": "2026-05-06T00:00:00Z",
+            "document_id": ocr["document_id"],
+            "bronze_s3_key": ocr["bronze_s3_key"],
+            "candidate": ocr["candidate"],
+        }
+    )
+
+    assert ocr["processing_status"] == "extracted"
+    assert ocr["bronze_s3_key"] == "bronze/textract-json/run_id=run-1/sample.json"
+    assert enriched["processing_status"] in {"accepted", "rejected"}
+    assert "silver/valid/run_id=run-1/sample.json" in writes or "silver/rejected/run_id=run-1/sample.json" in writes
+
+
+def test_structured_logging_includes_correlation_ids(caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        result = validate_input(
+            {
+                "run_id": "run-1",
+                "execution_id": "exec-1",
+                "source_s3_key": "raw/run_id=run-1/sample.tif",
+                "source_file_name": "sample.tif",
+                "created_at": "2026-05-06T00:00:00Z",
+            }
+        )
+    payload = json.loads(caplog.records[-1].message)
+
+    assert result["valid"] is True
+    assert payload["run_id"] == "run-1"
+    assert payload["execution_id"] == "exec-1"
+    assert payload["document_id"] == "sample"
+    assert payload["stage"] == "validate_input"

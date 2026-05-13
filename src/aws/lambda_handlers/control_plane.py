@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,13 +8,15 @@ from typing import Any
 from urllib.parse import unquote_plus
 
 from src.aws.bedrock_client import BedrockNormalizerClient
+from src.aws.logging_utils import get_logger
 from src.config.pipeline_config import load_pipeline_config
-from src.pipeline.aws_runtime import AwsPipelineRequest, AwsPipelineRunner
+from src.pipeline.aws_runtime import (
+    AwsPipelineRequest,
+    AwsPipelineRunner,
+    extract_expense_candidates,
+)
 from src.pipeline.quality import create_failed_document
 from src.pipeline.run_context import build_storage_key
-
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-logger = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -51,6 +52,43 @@ def _fallback_run_id(prefix: str = "invoice-pipeline-aws") -> str:
     return f"{prefix}-{timestamp}"
 
 
+def _document_id(source_file_name: str, source_s3_key: str = "") -> str:
+    name = source_file_name or Path(source_s3_key).name
+    return Path(name).stem
+
+
+def _bound_logger(
+    stage: str,
+    event: dict[str, Any],
+    *,
+    document_id: str | None = None,
+):
+    return get_logger(stage).bind(
+        run_id=event.get("run_id"),
+        execution_id=event.get("execution_id"),
+        document_id=document_id or event.get("document_id"),
+        source_s3_key=event.get("source_s3_key"),
+    )
+
+
+def _dry_run_response(event: dict[str, Any], stage: str) -> dict[str, Any] | None:
+    if not event.get("_dry_run"):
+        return None
+
+    identity: dict[str, Any] = {}
+    boto3 = _optional_boto3()
+    if boto3 is not None:
+        identity = boto3.client("sts").get_caller_identity()
+
+    logger = _bound_logger(stage, event)
+    logger.info({"message": "Runtime access dry run succeeded", "status": "ok"})
+    return {
+        "dry_run": True,
+        "stage": stage,
+        "identity": identity,
+    }
+
+
 def _s3_event_records(event: dict[str, Any]) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     for record in event.get("Records", []) or []:
@@ -68,21 +106,30 @@ def _s3_event_records(event: dict[str, Any]) -> list[dict[str, str]]:
                 "source_file_name": source_file_name,
                 "run_id": _extract_run_id_from_key(source_s3_key) or _fallback_run_id(),
                 "created_at": _utc_now_iso(),
+                "sqs_message_id": str(record.get("_sqs_message_id") or ""),
             }
         )
     return records
 
 
 def _unwrap_sqs_records(event: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extrae S3 Records embebidos en los bodies de mensajes SQS."""
     unwrapped: list[dict[str, Any]] = []
+    logger = get_logger("raw_dispatch")
     for record in event.get("Records", []) or []:
         if record.get("eventSource") == "aws:sqs":
             try:
                 body = json.loads(record.get("body") or "{}")
-                unwrapped.extend(body.get("Records", []))
+                for s3_record in body.get("Records", []):
+                    s3_record["_sqs_message_id"] = record.get("messageId")
+                    unwrapped.append(s3_record)
             except (json.JSONDecodeError, AttributeError):
-                logger.warning("Could not parse SQS record body: %s", record.get("body"))
+                logger.warning(
+                    {
+                        "message": "Could not parse SQS record body",
+                        "status": "warning",
+                        "error_code": "invalid_sqs_body",
+                    }
+                )
         else:
             unwrapped.append(record)
     return unwrapped
@@ -101,6 +148,7 @@ def _direct_record(event: dict[str, Any]) -> dict[str, str]:
             or _fallback_run_id()
         ),
         "created_at": str(event.get("created_at") or _utc_now_iso()),
+        "sqs_message_id": str(event.get("sqs_message_id") or ""),
     }
 
 
@@ -116,7 +164,7 @@ class S3JsonStore:
     def __init__(self, bucket_name: str) -> None:
         boto3 = _optional_boto3()
         if boto3 is None:
-            raise RuntimeError("boto3 is required to write AWS pipeline outputs")
+            raise RuntimeError("boto3 is required to access AWS pipeline outputs")
         self.bucket_name = bucket_name
         self.client = boto3.client("s3")
 
@@ -127,6 +175,11 @@ class S3JsonStore:
             Body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
             ContentType="application/json",
         )
+
+    def read_json(self, key: str) -> dict[str, Any]:
+        response = self.client.get_object(Bucket=self.bucket_name, Key=key)
+        body = response["Body"].read().decode("utf-8")
+        return json.loads(body)
 
 
 class TextractAnalyzeExpenseClient:
@@ -149,7 +202,16 @@ class TextractAnalyzeExpenseClient:
         return json.loads(json.dumps(response, default=str))
 
 
+class _NoopTextractClient:
+    def analyze_expense(self, source_s3_key: str) -> dict[str, Any]:
+        raise RuntimeError(f"Textract is not available in this stage: {source_s3_key}")
+
+
 def validate_input(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "validate_input")
+    if dry_run is not None:
+        return dry_run
+
     config = load_pipeline_config()
     supported = {
         extension.lower()
@@ -158,6 +220,8 @@ def validate_input(event: dict[str, Any], _context: Any = None) -> dict[str, Any
     source_s3_key = str(event.get("source_s3_key") or "")
     source_file_name = str(event.get("source_file_name") or Path(source_s3_key).name)
     extension = Path(source_file_name).suffix.lower()
+    document_id = _document_id(source_file_name, source_s3_key)
+    logger = _bound_logger("validate_input", event, document_id=document_id)
 
     errors: list[str] = []
     if not event.get("run_id"):
@@ -167,17 +231,29 @@ def validate_input(event: dict[str, Any], _context: Any = None) -> dict[str, Any
     if extension not in supported:
         errors.append("unsupported_extension")
 
-    return {
+    result = {
         "valid": not errors,
         "errors": errors,
         "run_id": event.get("run_id"),
+        "execution_id": event.get("execution_id"),
         "source_s3_key": source_s3_key,
         "source_file_name": source_file_name,
         "created_at": event.get("created_at"),
     }
+    logger.info(
+        {
+            "message": "Input validation completed",
+            "status": "accepted" if result["valid"] else "rejected",
+        }
+    )
+    return result
 
 
 def start_raw_ingestion(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "raw_dispatch")
+    if dry_run is not None:
+        return dry_run
+
     records = _s3_event_records({"Records": _unwrap_sqs_records(event)})
     if not records:
         records = [_direct_record(event)]
@@ -197,10 +273,12 @@ def start_raw_ingestion(event: dict[str, Any], _context: Any = None) -> dict[str
         )[:80]
         payload = {
             "run_id": record["run_id"],
+            "execution_id": sanitized_name,
             "source_s3_key": record["source_s3_key"],
             "source_file_name": record["source_file_name"],
             "created_at": record["created_at"],
             "bucket_name": record["bucket_name"],
+            "sqs_message_id": record["sqs_message_id"],
         }
         response = client.start_execution(
             stateMachineArn=state_machine_arn,
@@ -210,15 +288,21 @@ def start_raw_ingestion(event: dict[str, Any], _context: Any = None) -> dict[str
         executions.append(
             {
                 "execution_arn": str(response["executionArn"]),
+                "execution_id": sanitized_name,
                 "run_id": record["run_id"],
                 "source_s3_key": record["source_s3_key"],
             }
         )
-        logger.info(
-            "Started Step Functions execution run_id=%s source_s3_key=%s execution_arn=%s",
-            record["run_id"],
-            record["source_s3_key"],
-            response["executionArn"],
+        get_logger("raw_dispatch").bind(
+            run_id=record["run_id"],
+            execution_id=sanitized_name,
+            document_id=_document_id(record["source_file_name"]),
+            source_s3_key=record["source_s3_key"],
+        ).info(
+            {
+                "message": "Started Step Functions execution",
+                "status": "started",
+            }
         )
 
     return {
@@ -268,97 +352,42 @@ def _build_metrics(document: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
-def process_document(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
-    run_id = str(event.get("run_id") or "")
+def _request_from_event(event: dict[str, Any]) -> AwsPipelineRequest:
     source_s3_key = str(event.get("source_s3_key") or "")
-    source_file_name = str(event.get("source_file_name") or Path(source_s3_key).name)
-    created_at = str(event.get("created_at") or _utc_now_iso())
-    data_lake_bucket = _env("DATA_LAKE_BUCKET")
-    bronze_prefix = _env("BRONZE_PREFIX", "bronze/textract-json")
-    silver_valid_prefix = _env("SILVER_VALID_PREFIX", "silver/valid")
-    silver_rejected_prefix = _env("SILVER_REJECTED_PREFIX", "silver/rejected")
-    errors_prefix = _env("ERRORS_PREFIX", "errors")
-
-    document_id = Path(source_file_name).stem
-    silver_valid_key = build_storage_key(silver_valid_prefix, run_id, f"{document_id}.json")
-    boto3 = _optional_boto3()
-    if boto3 is not None:
-        _s3_check = boto3.client("s3")
-        try:
-            _s3_check.head_object(Bucket=data_lake_bucket, Key=silver_valid_key)
-            logger.info(
-                "Skipping already-processed document run_id=%s source_s3_key=%s",
-                run_id,
-                source_s3_key,
-            )
-            return {
-                "run_id": run_id,
-                "source_s3_key": source_s3_key,
-                "source_file_name": source_file_name,
-                "document_id": document_id,
-                "processing_status": "skipped",
-                "quality_status": "skipped",
-                "output_s3_key": silver_valid_key,
-                "metrics": [],
-            }
-        except _s3_check.exceptions.ClientError as exc:
-            if exc.response["Error"]["Code"] not in ("404", "NoSuchKey"):
-                raise
-
-    object_store = S3JsonStore(data_lake_bucket)
-    bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID")
-    bedrock = BedrockNormalizerClient(bedrock_model_id) if bedrock_model_id else None
-    runner = AwsPipelineRunner(
-        textract=TextractAnalyzeExpenseClient(data_lake_bucket),
-        object_store=object_store,
-        bedrock=bedrock,
-        bedrock_model_id=bedrock_model_id,
-        bronze_prefix=bronze_prefix,
-    )
-
-    request = AwsPipelineRequest(
-        run_id=run_id,
+    return AwsPipelineRequest(
+        run_id=str(event.get("run_id") or ""),
         source_s3_key=source_s3_key,
-        source_file_name=source_file_name,
-        created_at=created_at,
+        source_file_name=str(event.get("source_file_name") or Path(source_s3_key).name),
+        created_at=str(event.get("created_at") or _utc_now_iso()),
     )
 
-    try:
-        silver_document = runner.process_document(request)
-    except Exception as exc:
-        silver_document = create_failed_document(
-            run_id=run_id,
-            document_id=Path(source_file_name).stem,
-            source_s3_key=source_s3_key,
-            source_file_name=source_file_name,
-            extraction_engine="textract_analyze_expense",
-            normalization_engine="textract_only",
-            llm_model_id=None,
-            created_at=created_at,
-            failure_flags=["textract_request_failed"],
-        )
-        logger.exception(
-            "Document processing failed run_id=%s source_s3_key=%s error=%s",
-            run_id,
-            source_s3_key,
-            exc,
-        )
 
+def _silver_prefixes() -> dict[str, str]:
+    return {
+        "silver_valid_prefix": _env("SILVER_VALID_PREFIX", "silver/valid"),
+        "silver_rejected_prefix": _env("SILVER_REJECTED_PREFIX", "silver/rejected"),
+        "errors_prefix": _env("ERRORS_PREFIX", "errors"),
+    }
+
+
+def _write_final_document(
+    *,
+    object_store: S3JsonStore,
+    silver_document: dict[str, Any],
+    request: AwsPipelineRequest,
+) -> dict[str, Any]:
     output_key = _process_output_key(
         silver_document=silver_document,
         document_id=str(silver_document["document_id"]),
-        run_id=run_id,
-        silver_valid_prefix=silver_valid_prefix,
-        silver_rejected_prefix=silver_rejected_prefix,
-        errors_prefix=errors_prefix,
+        run_id=request.run_id,
+        **_silver_prefixes(),
     )
     object_store.write_json(output_key, silver_document)
     metrics = _build_metrics(silver_document)
-
     return {
-        "run_id": run_id,
-        "source_s3_key": source_s3_key,
-        "source_file_name": source_file_name,
+        "run_id": request.run_id,
+        "source_s3_key": request.source_s3_key,
+        "source_file_name": request.source_file_name,
         "document_id": silver_document["document_id"],
         "processing_status": silver_document["processing_status"],
         "quality_status": silver_document["quality_status"],
@@ -367,10 +396,256 @@ def process_document(event: dict[str, Any], _context: Any = None) -> dict[str, A
     }
 
 
+def _silver_valid_key(request: AwsPipelineRequest) -> str:
+    return build_storage_key(
+        _env("SILVER_VALID_PREFIX", "silver/valid"),
+        request.run_id,
+        f"{_document_id(request.source_file_name, request.source_s3_key)}.json",
+    )
+
+
+def _s3_key_exists(bucket_name: str, key: str) -> bool:
+    boto3 = _optional_boto3()
+    if boto3 is None:
+        return False
+    client = boto3.client("s3")
+    try:
+        client.head_object(Bucket=bucket_name, Key=key)
+        return True
+    except client.exceptions.ClientError as exc:
+        if exc.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
+def _bedrock_client() -> BedrockNormalizerClient | None:
+    bedrock_model_id = os.environ.get("BEDROCK_MODEL_ID")
+    return BedrockNormalizerClient(bedrock_model_id) if bedrock_model_id else None
+
+
+def process_document(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "process_document")
+    if dry_run is not None:
+        return dry_run
+
+    request = _request_from_event(event)
+    execution_id = str(event.get("execution_id") or "")
+    document_id = _document_id(request.source_file_name, request.source_s3_key)
+    logger = _bound_logger("process_document", event, document_id=document_id)
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    bronze_prefix = _env("BRONZE_PREFIX", "bronze/textract-json")
+    silver_valid_key = _silver_valid_key(request)
+
+    if _s3_key_exists(data_lake_bucket, silver_valid_key):
+        logger.info({"message": "Skipping already-processed document", "status": "skipped"})
+        return {
+            "run_id": request.run_id,
+            "execution_id": execution_id,
+            "source_s3_key": request.source_s3_key,
+            "source_file_name": request.source_file_name,
+            "document_id": document_id,
+            "processing_status": "skipped",
+            "quality_status": "skipped",
+            "output_s3_key": silver_valid_key,
+            "metrics": [],
+        }
+
+    object_store = S3JsonStore(data_lake_bucket)
+    runner = AwsPipelineRunner(
+        textract=TextractAnalyzeExpenseClient(data_lake_bucket),
+        object_store=object_store,
+        bedrock=_bedrock_client(),
+        bedrock_model_id=os.environ.get("BEDROCK_MODEL_ID"),
+        bronze_prefix=bronze_prefix,
+        logger_adapter=logger,
+    )
+
+    try:
+        silver_document = runner.process_document(request)
+    except Exception as exc:
+        silver_document = create_failed_document(
+            run_id=request.run_id,
+            document_id=document_id,
+            source_s3_key=request.source_s3_key,
+            source_file_name=request.source_file_name,
+            extraction_engine="textract_analyze_expense",
+            normalization_engine="textract_only",
+            llm_model_id=None,
+            created_at=request.created_at,
+            failure_flags=["textract_request_failed"],
+        )
+        logger.exception(
+            {
+                "message": "Document processing failed",
+                "status": "failed",
+                "error_code": exc.__class__.__name__,
+            }
+        )
+
+    result = _write_final_document(
+        object_store=object_store,
+        silver_document=silver_document,
+        request=request,
+    )
+    result["execution_id"] = execution_id
+    logger.info(
+        {
+            "message": "Document processing completed",
+            "status": result["processing_status"],
+        }
+    )
+    return result
+
+
+def extract_ocr(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "extract_ocr")
+    if dry_run is not None:
+        return dry_run
+
+    request = _request_from_event(event)
+    execution_id = str(event.get("execution_id") or "")
+    document_id = _document_id(request.source_file_name, request.source_s3_key)
+    logger = _bound_logger("extract_ocr", event, document_id=document_id)
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    bronze_prefix = _env("BRONZE_PREFIX", "bronze/textract-json")
+    silver_valid_key = _silver_valid_key(request)
+
+    if _s3_key_exists(data_lake_bucket, silver_valid_key):
+        logger.info({"message": "Skipping already-processed document", "status": "skipped"})
+        return {
+            "run_id": request.run_id,
+            "execution_id": execution_id,
+            "source_s3_key": request.source_s3_key,
+            "source_file_name": request.source_file_name,
+            "document_id": document_id,
+            "processing_status": "skipped",
+            "quality_status": "skipped",
+            "output_s3_key": silver_valid_key,
+            "metrics": [],
+        }
+
+    object_store = S3JsonStore(data_lake_bucket)
+    runner = AwsPipelineRunner(
+        textract=TextractAnalyzeExpenseClient(data_lake_bucket),
+        object_store=object_store,
+        bedrock=None,
+        bronze_prefix=bronze_prefix,
+        logger_adapter=logger,
+    )
+    ocr_result = runner.run_ocr(request)
+    failed_document = ocr_result.get("failed_document")
+    if failed_document:
+        result = _write_final_document(
+            object_store=object_store,
+            silver_document=failed_document,
+            request=request,
+        )
+        result["execution_id"] = execution_id
+        logger.info({"message": "OCR extraction failed", "status": "failed"})
+        return result
+
+    logger.info({"message": "OCR extraction completed", "status": "extracted"})
+    return {
+        "run_id": request.run_id,
+        "execution_id": execution_id,
+        "source_s3_key": request.source_s3_key,
+        "source_file_name": request.source_file_name,
+        "document_id": ocr_result["document_id"],
+        "bronze_s3_key": ocr_result["bronze_s3_key"],
+        "candidate": ocr_result["candidate"],
+        "processing_status": ocr_result["processing_status"],
+        "metrics": [],
+    }
+
+
+def enrich_with_llm(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "enrich_with_llm")
+    if dry_run is not None:
+        return dry_run
+
+    request = _request_from_event(event)
+    execution_id = str(event.get("execution_id") or "")
+    document_id = _document_id(request.source_file_name, request.source_s3_key)
+    logger = _bound_logger("enrich_with_llm", event, document_id=document_id)
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    bronze_prefix = _env("BRONZE_PREFIX", "bronze/textract-json")
+    bronze_key = str(
+        event.get("bronze_s3_key")
+        or build_storage_key(bronze_prefix, request.run_id, f"{document_id}.json")
+    )
+    object_store = S3JsonStore(data_lake_bucket)
+    candidate = event.get("candidate")
+
+    if not isinstance(candidate, dict):
+        bronze_record = object_store.read_json(bronze_key)
+        if bronze_record.get("status") == "failed":
+            silver_document = create_failed_document(
+                run_id=request.run_id,
+                document_id=document_id,
+                source_s3_key=request.source_s3_key,
+                source_file_name=request.source_file_name,
+                extraction_engine="textract_analyze_expense",
+                normalization_engine="textract_only",
+                llm_model_id=None,
+                created_at=request.created_at,
+                failure_flags=["textract_request_failed"],
+            )
+        else:
+            candidate = extract_expense_candidates(
+                dict(bronze_record.get("textract_response") or {})
+            )
+            runner = AwsPipelineRunner(
+                textract=_NoopTextractClient(),
+                object_store=object_store,
+                bedrock=_bedrock_client(),
+                bedrock_model_id=os.environ.get("BEDROCK_MODEL_ID"),
+                bronze_prefix=bronze_prefix,
+                logger_adapter=logger,
+            )
+            silver_document = runner.run_enrichment(
+                request,
+                candidate=candidate,
+                bronze_key=bronze_key,
+            )
+    else:
+        runner = AwsPipelineRunner(
+            textract=_NoopTextractClient(),
+            object_store=object_store,
+            bedrock=_bedrock_client(),
+            bedrock_model_id=os.environ.get("BEDROCK_MODEL_ID"),
+            bronze_prefix=bronze_prefix,
+            logger_adapter=logger,
+        )
+        silver_document = runner.run_enrichment(
+            request,
+            candidate=dict(candidate),
+            bronze_key=bronze_key,
+        )
+
+    result = _write_final_document(
+        object_store=object_store,
+        silver_document=silver_document,
+        request=request,
+    )
+    result["execution_id"] = execution_id
+    logger.info(
+        {
+            "message": "LLM enrichment completed",
+            "status": result["processing_status"],
+        }
+    )
+    return result
+
+
 def publish_run_metrics(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    dry_run = _dry_run_response(event, "publish_metrics")
+    if dry_run is not None:
+        return dry_run
+
     namespace = os.getenv("CLOUDWATCH_NAMESPACE", "InvoicePipeline")
     metrics = list(event.get("metrics") or [])
     published = False
+    logger = _bound_logger("publish_metrics", event)
 
     boto3 = _optional_boto3()
 
@@ -382,9 +657,16 @@ def publish_run_metrics(event: dict[str, Any], _context: Any = None) -> dict[str
         )
         published = True
 
+    logger.info(
+        {
+            "message": "Run metrics publish completed",
+            "status": "published" if published else "skipped",
+        }
+    )
     return {
         "published": published,
         "namespace": namespace,
         "metric_count": len(metrics),
         "run_id": event.get("run_id"),
+        "execution_id": event.get("execution_id"),
     }

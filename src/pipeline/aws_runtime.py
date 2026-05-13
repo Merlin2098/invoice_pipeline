@@ -96,46 +96,28 @@ class AwsPipelineRunner:
         bedrock: BedrockNormalizer | None = None,
         bedrock_model_id: str | None = None,
         bronze_prefix: str = "bronze/textract-json",
+        logger_adapter: logging.LoggerAdapter[Any] | logging.Logger | None = None,
     ) -> None:
         self.textract = textract
         self.object_store = object_store
         self.bedrock = bedrock
         self.bedrock_model_id = bedrock_model_id
         self.bronze_prefix = bronze_prefix
+        self.logger = logger_adapter or logger
 
-    def process_document(self, request: AwsPipelineRequest) -> dict[str, Any]:
-        document_id = Path(request.source_file_name).stem
-        bronze_key = build_storage_key(self.bronze_prefix, request.run_id, f"{document_id}.json")
-        try:
-            textract_response = self.textract.analyze_expense(request.source_s3_key)
-        except Exception as exc:
-            self.object_store.write_json(
-                bronze_key,
-                {
-                    "run_id": request.run_id,
-                    "document_id": document_id,
-                    "source_s3_key": request.source_s3_key,
-                    "source_file_name": request.source_file_name,
-                    "textract_job_id": None,
-                    "textract_response_s3_key": bronze_key,
-                    "textract_response": {},
-                    "extraction_engine": "textract_analyze_expense",
-                    "extraction_timestamp": request.created_at,
-                    "status": "failed",
-                    "error_message": str(exc),
-                },
-            )
-            return create_failed_document(
-                run_id=request.run_id,
-                document_id=document_id,
-                source_s3_key=request.source_s3_key,
-                source_file_name=request.source_file_name,
-                extraction_engine="textract_analyze_expense",
-                normalization_engine="bedrock" if self.bedrock else "textract_only",
-                llm_model_id="bedrock-model-id" if self.bedrock else None,
-                created_at=request.created_at,
-                failure_flags=["textract_request_failed"],
-            )
+    def _bronze_key(self, request: AwsPipelineRequest, document_id: str) -> str:
+        return build_storage_key(self.bronze_prefix, request.run_id, f"{document_id}.json")
+
+    def _write_bronze(
+        self,
+        *,
+        request: AwsPipelineRequest,
+        document_id: str,
+        bronze_key: str,
+        textract_response: dict[str, Any],
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
         self.object_store.write_json(
             bronze_key,
             {
@@ -148,17 +130,87 @@ class AwsPipelineRunner:
                 "textract_response": textract_response,
                 "extraction_engine": "textract_analyze_expense",
                 "extraction_timestamp": request.created_at,
-                "status": "success",
-                "error_message": None,
+                "status": status,
+                "error_message": error_message,
             },
         )
 
+    def run_ocr(self, request: AwsPipelineRequest) -> dict[str, Any]:
+        document_id = Path(request.source_file_name).stem
+        bronze_key = self._bronze_key(request, document_id)
+        try:
+            textract_response = self.textract.analyze_expense(request.source_s3_key)
+        except Exception as exc:
+            self._write_bronze(
+                request=request,
+                document_id=document_id,
+                bronze_key=bronze_key,
+                textract_response={},
+                status="failed",
+                error_message=str(exc),
+            )
+            failed_document = create_failed_document(
+                run_id=request.run_id,
+                document_id=document_id,
+                source_s3_key=request.source_s3_key,
+                source_file_name=request.source_file_name,
+                extraction_engine="textract_analyze_expense",
+                normalization_engine="bedrock" if self.bedrock else "textract_only",
+                llm_model_id=self.bedrock_model_id if self.bedrock else None,
+                created_at=request.created_at,
+                failure_flags=["textract_request_failed"],
+            )
+            return {
+                "run_id": request.run_id,
+                "document_id": document_id,
+                "source_s3_key": request.source_s3_key,
+                "source_file_name": request.source_file_name,
+                "bronze_s3_key": bronze_key,
+                "candidate": None,
+                "failed_document": failed_document,
+                "processing_status": "failed",
+            }
+
+        self._write_bronze(
+            request=request,
+            document_id=document_id,
+            bronze_key=bronze_key,
+            textract_response=textract_response,
+            status="success",
+            error_message=None,
+        )
+
         candidate = extract_expense_candidates(textract_response)
+        return {
+            "run_id": request.run_id,
+            "document_id": document_id,
+            "source_s3_key": request.source_s3_key,
+            "source_file_name": request.source_file_name,
+            "bronze_s3_key": bronze_key,
+            "candidate": candidate,
+            "failed_document": None,
+            "processing_status": "extracted",
+        }
+
+    def run_enrichment(
+        self,
+        request: AwsPipelineRequest,
+        *,
+        candidate: dict[str, Any],
+        bronze_key: str | None = None,
+    ) -> dict[str, Any]:
+        document_id = Path(request.source_file_name).stem
         if self.bedrock and should_use_bedrock(candidate):
             try:
                 candidate.update(self.bedrock.normalize(candidate))
             except Exception as exc:
-                logger.exception("Bedrock normalization failed document_id=%s error=%s", document_id, exc)
+                self.logger.exception(
+                    {
+                        "message": "Bedrock normalization failed",
+                        "document_id": document_id,
+                        "error_code": exc.__class__.__name__,
+                    }
+                )
                 candidate.setdefault("quality_flags", []).append("bedrock_request_failed")
 
         return build_aws_silver_document(
@@ -171,4 +223,15 @@ class AwsPipelineRunner:
             extraction_engine="textract_analyze_expense",
             normalization_engine="bedrock" if self.bedrock else "textract_only",
             llm_model_id=self.bedrock_model_id if self.bedrock else None,
+        )
+
+    def process_document(self, request: AwsPipelineRequest) -> dict[str, Any]:
+        ocr_result = self.run_ocr(request)
+        failed_document = ocr_result.get("failed_document")
+        if failed_document:
+            return failed_document
+        return self.run_enrichment(
+            request,
+            candidate=dict(ocr_result["candidate"]),
+            bronze_key=str(ocr_result["bronze_s3_key"]),
         )
