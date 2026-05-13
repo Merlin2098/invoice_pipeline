@@ -90,4 +90,6 @@ Thumbs.db
 ai/
 data/
 /prompt/
+/prompts/
 .claude/settings.local.json
+docs/prompts
