@@ -134,7 +134,7 @@ def run_silver_pipeline(
             len(bronze_record["text"]),
         )
         record = process_with_llm(bronze_record["text"], max_retries=max_retries)
-        flags = ensure_quality_flags(record)
+        ensure_quality_flags(record)
 
         source_file_name, source_path = parse_source_metadata(
             bronze_record["text"], default_name=f"{Path(source_file).stem}.tif"
@@ -150,6 +150,7 @@ def run_silver_pipeline(
                 normalization_engine="local_ollama",
                 llm_model_id=llm_model_id,
                 created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                failure_flags=ensure_quality_flags(record),
                 raw_text_path=bronze_record["raw_text_path"],
             )
             output_dir = failed_dir

@@ -69,6 +69,12 @@ def clean_string(value: Any) -> str | None:
         return None
 
     replacements = {
+        "\u00c3\u00a2\u00e2\u201a\u00ac\u00cb\u0153": "'",
+        "\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u201e\u00a2": "'",
+        "\u00c3\u00a2\u00e2\u201a\u00ac\u00c5\u201c": '"',
+        "\u00c3\u00a2\u00e2\u201a\u00ac\u00ef\u00bf\u00bd": '"',
+        "\u00c3\u201a\u00c2\u00ae": "",
+        "\u00c3\u201a": "",
         "â€˜": "'",
         "â€™": "'",
         "â€œ": '"',

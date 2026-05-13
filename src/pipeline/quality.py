@@ -272,6 +272,8 @@ def build_local_silver_document(
             "quality_flags": list(flags) if isinstance(flags, list) else [],
         }
     )
+    if document["document_date"] is None:
+        add_flag(document, "missing_document_date")
     return apply_quality_rules(document)
 
 
@@ -316,4 +318,3 @@ def build_aws_silver_document(
         }
     )
     return apply_quality_rules(document)
-
