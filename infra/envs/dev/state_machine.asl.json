@@ -1,5 +1,5 @@
 {
-  "Comment": "Document processing state machine for the AWS MVP baseline.",
+  "Comment": "Document processing state machine with separated OCR and LLM stages.",
   "StartAt": "ValidateInput",
   "States": {
     "ValidateInput": {
@@ -7,7 +7,13 @@
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "${validate_input_lambda_arn}",
-        "Payload.$": "$"
+        "Payload": {
+          "run_id.$": "$.run_id",
+          "execution_id.$": "$$.Execution.Name",
+          "source_s3_key.$": "$.source_s3_key",
+          "source_file_name.$": "$.source_file_name",
+          "created_at.$": "$.created_at"
+        }
       },
       "ResultPath": "$.validation",
       "Next": "InputValid?"
@@ -18,21 +24,60 @@
         {
           "Variable": "$.validation.Payload.valid",
           "BooleanEquals": true,
-          "Next": "ProcessDocument"
+          "Next": "ExtractOCR"
         }
       ],
       "Default": "ValidationFailed"
     },
-    "ProcessDocument": {
+    "ExtractOCR": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${process_document_lambda_arn}",
+        "FunctionName": "${extract_ocr_lambda_arn}",
         "Payload": {
           "run_id.$": "$.validation.Payload.run_id",
+          "execution_id.$": "$$.Execution.Name",
           "source_s3_key.$": "$.validation.Payload.source_s3_key",
           "source_file_name.$": "$.validation.Payload.source_file_name",
           "created_at.$": "$.validation.Payload.created_at"
+        }
+      },
+      "ResultPath": "$.processing",
+      "Next": "OcrSkipped?"
+    },
+    "OcrSkipped?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Or": [
+            {
+              "Variable": "$.processing.Payload.processing_status",
+              "StringEquals": "skipped"
+            },
+            {
+              "Variable": "$.processing.Payload.processing_status",
+              "StringEquals": "failed"
+            }
+          ],
+          "Next": "PublishRunMetrics"
+        }
+      ],
+      "Default": "EnrichWithLLM"
+    },
+    "EnrichWithLLM": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${enrich_llm_lambda_arn}",
+        "Payload": {
+          "run_id.$": "$.processing.Payload.run_id",
+          "execution_id.$": "$$.Execution.Name",
+          "source_s3_key.$": "$.processing.Payload.source_s3_key",
+          "source_file_name.$": "$.processing.Payload.source_file_name",
+          "created_at.$": "$.validation.Payload.created_at",
+          "document_id.$": "$.processing.Payload.document_id",
+          "bronze_s3_key.$": "$.processing.Payload.bronze_s3_key",
+          "candidate.$": "$.processing.Payload.candidate"
         }
       },
       "ResultPath": "$.processing",
@@ -45,6 +90,10 @@
         "FunctionName": "${publish_metrics_lambda_arn}",
         "Payload": {
           "run_id.$": "$.processing.Payload.run_id",
+          "execution_id.$": "$$.Execution.Name",
+          "document_id.$": "$.processing.Payload.document_id",
+          "source_s3_key.$": "$.processing.Payload.source_s3_key",
+          "status.$": "$.processing.Payload.processing_status",
           "metrics.$": "$.processing.Payload.metrics"
         }
       },

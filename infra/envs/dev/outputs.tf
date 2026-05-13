@@ -68,6 +68,16 @@ output "process_document_lambda_name" {
   value       = module.process_document_lambda.lambda_name
 }
 
+output "extract_ocr_lambda_name" {
+  description = "Lambda function name used by Step Functions to call Textract and write bronze outputs."
+  value       = module.extract_ocr_lambda.lambda_name
+}
+
+output "enrich_llm_lambda_name" {
+  description = "Lambda function name used by Step Functions to enrich OCR candidates and write final outputs."
+  value       = module.enrich_llm_lambda.lambda_name
+}
+
 output "publish_metrics_lambda_name" {
   description = "Lambda function name used by Step Functions to publish CloudWatch metrics."
   value       = module.publish_metrics_lambda.lambda_name

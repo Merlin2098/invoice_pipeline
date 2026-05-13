@@ -81,6 +81,22 @@ module "process_document_log_group" {
   tags              = local.common_tags
 }
 
+module "extract_ocr_log_group" {
+  source = "../../modules/cloudwatch_log_group"
+
+  name              = "/aws/lambda/${local.name_prefix}-extract-ocr"
+  retention_in_days = var.lambda_log_retention_in_days
+  tags              = local.common_tags
+}
+
+module "enrich_llm_log_group" {
+  source = "../../modules/cloudwatch_log_group"
+
+  name              = "/aws/lambda/${local.name_prefix}-enrich-llm"
+  retention_in_days = var.lambda_log_retention_in_days
+  tags              = local.common_tags
+}
+
 module "publish_metrics_log_group" {
   source = "../../modules/cloudwatch_log_group"
 
@@ -101,6 +117,8 @@ data "aws_iam_policy_document" "lambda_logging" {
       "${module.raw_dispatch_log_group.arn}:*",
       "${module.validate_input_log_group.arn}:*",
       "${module.process_document_log_group.arn}:*",
+      "${module.extract_ocr_log_group.arn}:*",
+      "${module.enrich_llm_log_group.arn}:*",
       "${module.publish_metrics_log_group.arn}:*",
     ]
   }
@@ -179,12 +197,112 @@ data "aws_iam_policy_document" "process_document_data_lake_access" {
   }
 
   statement {
+    sid       = "ListSilverValidPrefix"
+    actions   = ["s3:ListBucket"]
+    resources = [module.data_lake_bucket.bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        local.silver_valid_prefix,
+        "${local.silver_valid_prefix}/*",
+      ]
+    }
+  }
+
+  statement {
     sid = "WritePipelineOutputs"
     actions = [
       "s3:PutObject",
     ]
     resources = [
       "${module.data_lake_bucket.bucket_arn}/${local.bronze_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.silver_valid_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.silver_rejected_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.errors_prefix}/*",
+    ]
+  }
+}
+
+data "aws_iam_policy_document" "extract_ocr_data_lake_access" {
+  statement {
+    sid       = "ReadRawObjects"
+    actions   = ["s3:GetObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/${local.raw_prefix}/*"]
+  }
+
+  statement {
+    sid       = "ListRawPrefix"
+    actions   = ["s3:ListBucket"]
+    resources = [module.data_lake_bucket.bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        local.raw_prefix,
+        "${local.raw_prefix}/*",
+      ]
+    }
+  }
+
+  statement {
+    sid       = "CheckSilverIdempotency"
+    actions   = ["s3:GetObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/${local.silver_valid_prefix}/*"]
+  }
+
+  statement {
+    sid       = "ListSilverValidPrefix"
+    actions   = ["s3:ListBucket"]
+    resources = [module.data_lake_bucket.bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        local.silver_valid_prefix,
+        "${local.silver_valid_prefix}/*",
+      ]
+    }
+  }
+
+  statement {
+    sid       = "WriteBronzeObjects"
+    actions   = ["s3:PutObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/${local.bronze_prefix}/*"]
+  }
+}
+
+data "aws_iam_policy_document" "enrich_llm_data_lake_access" {
+  statement {
+    sid       = "ReadBronzeObjects"
+    actions   = ["s3:GetObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/${local.bronze_prefix}/*"]
+  }
+
+  statement {
+    sid       = "ListBronzePrefix"
+    actions   = ["s3:ListBucket"]
+    resources = [module.data_lake_bucket.bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        local.bronze_prefix,
+        "${local.bronze_prefix}/*",
+      ]
+    }
+  }
+
+  statement {
+    sid = "WriteFinalOutputs"
+    actions = [
+      "s3:PutObject",
+    ]
+    resources = [
       "${module.data_lake_bucket.bucket_arn}/${local.silver_valid_prefix}/*",
       "${module.data_lake_bucket.bucket_arn}/${local.silver_rejected_prefix}/*",
       "${module.data_lake_bucket.bucket_arn}/${local.errors_prefix}/*",
@@ -209,6 +327,10 @@ data "aws_iam_policy_document" "step_function_lambda_invoke" {
       "${module.validate_input_lambda.lambda_arn}:*",
       module.process_document_lambda.lambda_arn,
       "${module.process_document_lambda.lambda_arn}:*",
+      module.extract_ocr_lambda.lambda_arn,
+      "${module.extract_ocr_lambda.lambda_arn}:*",
+      module.enrich_llm_lambda.lambda_arn,
+      "${module.enrich_llm_lambda.lambda_arn}:*",
       module.publish_metrics_lambda.lambda_arn,
       "${module.publish_metrics_lambda.lambda_arn}:*",
     ]
@@ -235,6 +357,8 @@ module "invoice_pipeline_state_machine" {
   definition = templatefile("${path.module}/state_machine.asl.json", {
     validate_input_lambda_arn   = module.validate_input_lambda.lambda_arn
     process_document_lambda_arn = module.process_document_lambda.lambda_arn
+    extract_ocr_lambda_arn      = module.extract_ocr_lambda.lambda_arn
+    enrich_llm_lambda_arn       = module.enrich_llm_lambda.lambda_arn
     publish_metrics_lambda_arn  = module.publish_metrics_lambda.lambda_arn
   })
   log_group_name        = "/aws/vendedlogs/states/${local.name_prefix}-document-pipeline"
@@ -281,6 +405,30 @@ module "process_document_role" {
   tags = local.common_tags
 }
 
+module "extract_ocr_role" {
+  source = "../../modules/iam_role"
+
+  name             = "${local.name_prefix}-extract-ocr-role"
+  trusted_services = ["lambda.amazonaws.com"]
+  inline_policies = {
+    logging          = data.aws_iam_policy_document.lambda_logging.json
+    data_lake_access = data.aws_iam_policy_document.extract_ocr_data_lake_access.json
+  }
+  tags = local.common_tags
+}
+
+module "enrich_llm_role" {
+  source = "../../modules/iam_role"
+
+  name             = "${local.name_prefix}-enrich-llm-role"
+  trusted_services = ["lambda.amazonaws.com"]
+  inline_policies = {
+    logging          = data.aws_iam_policy_document.lambda_logging.json
+    data_lake_access = data.aws_iam_policy_document.enrich_llm_data_lake_access.json
+  }
+  tags = local.common_tags
+}
+
 module "publish_metrics_role" {
   source = "../../modules/iam_role"
 
@@ -301,11 +449,11 @@ module "raw_dispatch_lambda" {
   s3_bucket        = module.artifact_bucket.bucket_name
   s3_key           = var.lambda_package_s3_key
   source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
-  runtime        = var.lambda_runtime
-  handler        = var.raw_dispatch_handler
-  timeout        = var.lambda_timeout_seconds
-  memory_size    = var.lambda_memory_size
-  log_group_name = module.raw_dispatch_log_group.name
+  runtime          = var.lambda_runtime
+  handler          = var.raw_dispatch_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.raw_dispatch_log_group.name
   environment_variables = {
     DATA_LAKE_BUCKET  = module.data_lake_bucket.bucket_name
     STATE_MACHINE_ARN = module.invoice_pipeline_state_machine.state_machine_arn
@@ -322,12 +470,12 @@ module "validate_input_lambda" {
   s3_bucket        = module.artifact_bucket.bucket_name
   s3_key           = var.lambda_package_s3_key
   source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
-  runtime        = var.lambda_runtime
-  handler        = var.validate_input_handler
-  timeout        = var.lambda_timeout_seconds
-  memory_size    = var.lambda_memory_size
-  log_group_name = module.validate_input_log_group.name
-  tags           = local.common_tags
+  runtime          = var.lambda_runtime
+  handler          = var.validate_input_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.validate_input_log_group.name
+  tags             = local.common_tags
 }
 
 module "process_document_lambda" {
@@ -338,11 +486,11 @@ module "process_document_lambda" {
   s3_bucket        = module.artifact_bucket.bucket_name
   s3_key           = var.lambda_package_s3_key
   source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
-  runtime        = var.lambda_runtime
-  handler        = var.process_document_handler
-  timeout        = var.lambda_timeout_seconds
-  memory_size    = var.lambda_memory_size
-  log_group_name = module.process_document_log_group.name
+  runtime          = var.lambda_runtime
+  handler          = var.process_document_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.process_document_log_group.name
   environment_variables = {
     DATA_LAKE_BUCKET       = module.data_lake_bucket.bucket_name
     RAW_PREFIX             = local.raw_prefix
@@ -356,6 +504,56 @@ module "process_document_lambda" {
   tags = local.common_tags
 }
 
+module "extract_ocr_lambda" {
+  source = "../../modules/lambda_function"
+
+  function_name    = "${local.name_prefix}-extract-ocr"
+  role_arn         = module.extract_ocr_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
+  runtime          = var.lambda_runtime
+  handler          = var.extract_ocr_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.extract_ocr_log_group.name
+  environment_variables = {
+    DATA_LAKE_BUCKET       = module.data_lake_bucket.bucket_name
+    RAW_PREFIX             = local.raw_prefix
+    BRONZE_PREFIX          = local.bronze_prefix
+    SILVER_VALID_PREFIX    = local.silver_valid_prefix
+    SILVER_REJECTED_PREFIX = local.silver_rejected_prefix
+    ERRORS_PREFIX          = local.errors_prefix
+    TRACEABILITY_MODE      = "execution_id_ready"
+  }
+  tags = local.common_tags
+}
+
+module "enrich_llm_lambda" {
+  source = "../../modules/lambda_function"
+
+  function_name    = "${local.name_prefix}-enrich-llm"
+  role_arn         = module.enrich_llm_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
+  runtime          = var.lambda_runtime
+  handler          = var.enrich_llm_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.enrich_llm_log_group.name
+  environment_variables = {
+    DATA_LAKE_BUCKET       = module.data_lake_bucket.bucket_name
+    BRONZE_PREFIX          = local.bronze_prefix
+    SILVER_VALID_PREFIX    = local.silver_valid_prefix
+    SILVER_REJECTED_PREFIX = local.silver_rejected_prefix
+    ERRORS_PREFIX          = local.errors_prefix
+    BEDROCK_MODEL_ID       = var.bedrock_model_id
+    TRACEABILITY_MODE      = "execution_id_ready"
+  }
+  tags = local.common_tags
+}
+
 module "publish_metrics_lambda" {
   source = "../../modules/lambda_function"
 
@@ -364,11 +562,11 @@ module "publish_metrics_lambda" {
   s3_bucket        = module.artifact_bucket.bucket_name
   s3_key           = var.lambda_package_s3_key
   source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
-  runtime        = var.lambda_runtime
-  handler        = var.publish_metrics_handler
-  timeout        = var.lambda_timeout_seconds
-  memory_size    = var.lambda_memory_size
-  log_group_name = module.publish_metrics_log_group.name
+  runtime          = var.lambda_runtime
+  handler          = var.publish_metrics_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.publish_metrics_log_group.name
   environment_variables = {
     CLOUDWATCH_NAMESPACE = var.cloudwatch_namespace
   }
@@ -408,17 +606,23 @@ module "textract_permissions" {
   data_lake_bucket_arn = module.data_lake_bucket.bucket_arn
   raw_prefix           = local.raw_prefix
   bronze_prefix        = local.bronze_prefix
-  attach_to_role_names = [module.process_document_role.role_name]
-  tags                 = local.common_tags
+  attach_to_role_names = [
+    module.process_document_role.role_name,
+    module.extract_ocr_role.role_name,
+  ]
+  tags = local.common_tags
 }
 
 module "bedrock_permissions" {
   source = "../../modules/bedrock_permissions"
 
-  name                 = "${local.name_prefix}-bedrock"
-  aws_region           = var.aws_region
-  account_id           = data.aws_caller_identity.current.account_id
-  model_id             = var.bedrock_model_id
-  attach_to_role_names = [module.process_document_role.role_name]
-  tags                 = local.common_tags
+  name       = "${local.name_prefix}-bedrock"
+  aws_region = var.aws_region
+  account_id = data.aws_caller_identity.current.account_id
+  model_id   = var.bedrock_model_id
+  attach_to_role_names = [
+    module.process_document_role.role_name,
+    module.enrich_llm_role.role_name,
+  ]
+  tags = local.common_tags
 }

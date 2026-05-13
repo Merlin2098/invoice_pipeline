@@ -90,6 +90,18 @@ variable "process_document_handler" {
   default     = "src.aws.lambda_handlers.control_plane.process_document"
 }
 
+variable "extract_ocr_handler" {
+  description = "Handler for the OCR extraction Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.extract_ocr"
+}
+
+variable "enrich_llm_handler" {
+  description = "Handler for the LLM enrichment Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.enrich_with_llm"
+}
+
 variable "publish_metrics_handler" {
   description = "Handler for the metrics publishing Lambda."
   type        = string
@@ -111,13 +123,13 @@ variable "lambda_memory_size" {
 variable "lambda_log_retention_in_days" {
   description = "Retention period for Lambda logs."
   type        = number
-  default     = 30
+  default     = 14
 }
 
 variable "step_function_log_retention_in_days" {
   description = "Retention period for Step Functions logs."
   type        = number
-  default     = 30
+  default     = 14
 }
 
 variable "raw_prefix" {
