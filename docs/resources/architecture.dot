@@ -1,38 +1,127 @@
-digraph invoice_pipeline_sqs {
+digraph invoice_pipeline_dev {
     graph [
         rankdir  = LR
         fontname = "Helvetica"
-        label    = "Invoice Pipeline — SQS-Decoupled Architecture (dev)"
+        label    = "Invoice Pipeline - SQS-Decoupled AWS MVP Architecture (dev)"
         labelloc = t
         pad      = 0.5
-        splines  = ortho
+        splines  = polyline
     ]
-    node [fontname="Helvetica" fontsize=11 shape=box style="rounded,filled"
-          fillcolor="#f5f5f5" color="#555555"]
-    edge [fontname="Helvetica" fontsize=9 color="#555555"]
 
-    s3_raw   [label="S3 data-lake\nraw/ prefix"                                        fillcolor="#fff3cd"]
-    sqs_fifo [label="SQS Standard\ninvoice-pipeline-dev-raw-ingestion\nvisibility_timeout=6x lambda_timeout" fillcolor="#cfe2ff"]
-    sqs_dlq  [label="SQS DLQ (Standard)\ninvoice-pipeline-dev-raw-ingestion-dlq\nmaxReceiveCount=3 | retention=14d"  fillcolor="#f8d7da"]
-    dispatch [label="Lambda\nraw-dispatch\nstart_raw_ingestion"                         fillcolor="#d1e7dd"]
-    sfn      [label="Step Functions\ndocument-pipeline" shape=diamond                   fillcolor="#e2d9f3"]
-    validate [label="Lambda\nvalidate-input"                                            fillcolor="#d1e7dd"]
-    process  [label="Lambda\nprocess-document\n(head_object idempotency guard)"         fillcolor="#d1e7dd"]
-    metrics  [label="Lambda\npublish-metrics"                                           fillcolor="#d1e7dd"]
-    textract [label="Textract\nAnalyzeExpense" shape=ellipse                            fillcolor="#fde8d8"]
-    bedrock  [label="Bedrock\nClaude" shape=ellipse                                     fillcolor="#fde8d8"]
-    cw       [label="CloudWatch\nMetrics + Logs" shape=ellipse                          fillcolor="#fde8d8"]
-    s3_out   [label="S3 data-lake\nbronze/ | silver/valid/ | silver/rejected/ | errors/" fillcolor="#fff3cd"]
+    node [
+        fontname  = "Helvetica"
+        fontsize  = 11
+        shape     = box
+        style     = "rounded,filled"
+        fillcolor = "#f5f5f5"
+        color     = "#555555"
+    ]
 
-    s3_raw   -> sqs_fifo [label="s3:ObjectCreated:*\naws_s3_bucket_notification\nfilter: raw/ prefix"]
-    sqs_fifo -> sqs_dlq  [label="after 3 receive failures\nredrive_policy" style=dashed color="#dc3545"]
-    sqs_fifo -> dispatch  [label="aws_lambda_event_source_mapping\nbatch_size=1 | max_concurrency=5\nReportBatchItemFailures"]
-    dispatch -> sfn       [label="StartExecution\nexecution_name={run_id}-{stem}-{idx}"]
-    sfn      -> validate  [label="ValidateInput"]
-    sfn      -> process   [label="ProcessDocument"]
-    sfn      -> metrics   [label="PublishRunMetrics"]
-    process  -> textract  [label="AnalyzeExpense\n(after head_object check)"]
-    process  -> bedrock   [label="InvokeModel\n(optional fallback)"]
-    process  -> s3_out    [label="PutObject\nbronze + silver/errors"]
-    metrics  -> cw        [label="PutMetricData\nPutLogEvents"]
+    edge [
+        fontname = "Helvetica"
+        fontsize = 9
+        color    = "#555555"
+    ]
+
+    s3_raw [
+        label     = "S3 data lake\nraw/run_id=<run_id>/"
+        fillcolor = "#fff3cd"
+    ]
+
+    sqs_raw [
+        label     = "SQS Standard queue\ninvoice-pipeline-dev-raw-ingestion\nvisibility_timeout=6x lambda_timeout"
+        fillcolor = "#cfe2ff"
+    ]
+
+    sqs_dlq [
+        label     = "SQS DLQ\ninvoice-pipeline-dev-raw-ingestion-dlq\nmaxReceiveCount=3 | retention=14d"
+        fillcolor = "#f8d7da"
+    ]
+
+    raw_dispatch [
+        label     = "Lambda\nraw-dispatch\nstart_raw_ingestion"
+        fillcolor = "#d1e7dd"
+    ]
+
+    sfn [
+        label     = "Step Functions\ndocument-pipeline"
+        shape     = diamond
+        fillcolor = "#e2d9f3"
+    ]
+
+    validate [
+        label     = "Lambda\nvalidate-input\nValidateInput"
+        fillcolor = "#d1e7dd"
+    ]
+
+    extract_ocr [
+        label     = "Lambda\nextract-ocr\nTextract AnalyzeExpense\nbronze persistence"
+        fillcolor = "#d1e7dd"
+    ]
+
+    enrich_llm [
+        label     = "Lambda\nenrich-llm\nBedrock-assisted normalization\nfinal silver/error write"
+        fillcolor = "#d1e7dd"
+    ]
+
+    publish_metrics [
+        label     = "Lambda\npublish-metrics\nCloudWatch custom metrics"
+        fillcolor = "#d1e7dd"
+    ]
+
+    textract [
+        label     = "Amazon Textract\nAnalyzeExpense"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    bedrock [
+        label     = "Amazon Bedrock\noptional enrichment"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    cloudwatch [
+        label     = "CloudWatch\nLogs + Metrics"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    s3_bronze [
+        label     = "S3 data lake\nbronze/textract-json/"
+        fillcolor = "#fff3cd"
+    ]
+
+    s3_silver [
+        label     = "S3 data lake\nsilver/valid/\nsilver/rejected/"
+        fillcolor = "#fff3cd"
+    ]
+
+    s3_errors [
+        label     = "S3 data lake\nerrors/"
+        fillcolor = "#fff3cd"
+    ]
+
+    s3_gold [
+        label     = "S3 data lake\ngold/documents/\nplanned, not yet validated"
+        style     = "rounded,filled,dashed"
+        fillcolor = "#fff3cd"
+    ]
+
+    s3_raw          -> sqs_raw         [label="s3:ObjectCreated:*\nfilter: raw/ prefix"]
+    sqs_raw         -> sqs_dlq         [label="after 3 receive failures\nredrive_policy" style=dashed color="#dc3545"]
+    sqs_raw         -> raw_dispatch    [label="lambda event source mapping\nbatch_size=1 | max_concurrency=5\nReportBatchItemFailures"]
+    raw_dispatch    -> sfn             [label="StartExecution\nexecution_name={run_id}-{stem}-{idx}"]
+    sfn             -> validate        [label="ValidateInput"]
+    validate        -> extract_ocr     [label="InputValid?"]
+    extract_ocr     -> textract        [label="AnalyzeExpense"]
+    extract_ocr     -> s3_bronze       [label="PutObject\ntechnical evidence"]
+    extract_ocr     -> publish_metrics [label="skipped or failed" style=dashed]
+    extract_ocr     -> enrich_llm      [label="candidate + bronze_s3_key"]
+    enrich_llm      -> bedrock         [label="InvokeModel\nwhen BEDROCK_MODEL_ID is set"]
+    enrich_llm      -> s3_silver       [label="accepted or rejected document"]
+    enrich_llm      -> s3_errors       [label="technical failure document"]
+    enrich_llm      -> publish_metrics [label="processing result"]
+    publish_metrics -> cloudwatch      [label="PutMetricData\nlogs by stage"]
+    s3_silver       -> s3_gold         [label="future consolidation" style=dashed]
 }
