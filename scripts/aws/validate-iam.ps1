@@ -16,11 +16,99 @@ finally {
     Pop-Location
 }
 
+function Assert-Output {
+    param([string[]]$Names)
+    foreach ($name in $Names) {
+        if (-not $tf.PSObject.Properties.Name.Contains($name)) {
+            throw "Missing Terraform output: $name"
+        }
+        $value = $tf.PSObject.Properties[$name].Value.value
+        if ($null -eq $value -or "$value" -eq "") {
+            throw "Terraform output is empty: $name"
+        }
+        Write-Host "  ok output $name"
+    }
+}
+
+Assert-Output @(
+    "data_lake_bucket_arn",
+    "state_machine_arn",
+    "step_function_role_name",
+    "raw_ingestion_queue_arn",
+    "raw_dispatch_lambda_name",
+    "validate_input_lambda_name",
+    "process_document_lambda_name",
+    "extract_ocr_lambda_name",
+    "enrich_llm_lambda_name",
+    "publish_metrics_lambda_name",
+    "textract_policy_arn",
+    "bedrock_policy_arn"
+)
+
+function Invoke-AwsText {
+    param(
+        [string[]]$Arguments,
+        [string]$Label
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & aws @Arguments 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "AWS CLI failed for ${Label}: $($output -join [Environment]::NewLine)"
+    }
+    return ($output -join "`n").Trim()
+}
+
+function Invoke-AwsJson {
+    param(
+        [string[]]$Arguments,
+        [string]$Label
+    )
+
+    $text = Invoke-AwsText -Arguments $Arguments -Label $Label
+    if (-not $text) {
+        throw "AWS CLI returned empty JSON for $Label"
+    }
+    return $text | ConvertFrom-Json
+}
+
+function ConvertTo-StringList {
+    param([object]$Value)
+
+    $items = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Value)) {
+        if ($null -eq $item) {
+            continue
+        }
+        if ($item -is [array]) {
+            foreach ($nested in $item) {
+                if ($null -ne $nested -and "$nested" -ne "") {
+                    $items.Add([string]$nested)
+                }
+            }
+        }
+        elseif ("$item" -ne "") {
+            $items.Add([string]$item)
+        }
+    }
+    return $items.ToArray()
+}
+
 $bucketArn = $tf.data_lake_bucket_arn.value
 $stateMachineArn = $tf.state_machine_arn.value
 $queueArn = $tf.raw_ingestion_queue_arn.value
-$accountId = aws sts get-caller-identity --query Account --output text
-$region = aws configure get region
+$accountId = Invoke-AwsText `
+    -Arguments @("sts", "get-caller-identity", "--query", "Account", "--output", "text") `
+    -Label "STS caller identity"
+$region = Invoke-AwsText `
+    -Arguments @("configure", "get", "region") `
+    -Label "AWS configured region"
 if (-not $region) {
     $region = "us-east-1"
 }
@@ -35,10 +123,93 @@ function Get-OptionalOutputValue {
 
 function Get-LambdaRoleArn {
     param([string]$FunctionName)
-    return aws lambda get-function-configuration `
-        --function-name $FunctionName `
-        --query "Role" `
-        --output text
+    $roleArn = Invoke-AwsText `
+        -Arguments @(
+            "lambda",
+            "get-function-configuration",
+            "--function-name",
+            $FunctionName,
+            "--query",
+            "Role",
+            "--output",
+            "text"
+        ) `
+        -Label "Lambda role lookup for $FunctionName"
+    if (-not $roleArn -or $roleArn -eq "None") {
+        throw "Lambda $FunctionName did not return an execution role"
+    }
+    return $roleArn
+}
+
+function Get-RoleNameFromArn {
+    param([string]$RoleArn)
+    return ($RoleArn -split "/")[-1]
+}
+
+function Assert-IamRoleExists {
+    param(
+        [string]$RoleName,
+        [string]$Label
+    )
+
+    Invoke-AwsText `
+        -Arguments @("iam", "get-role", "--role-name", $RoleName, "--query", "Role.Arn", "--output", "text") `
+        -Label "IAM role lookup for $RoleName" | Out-Null
+    Write-Host "  ok role $Label ($RoleName)"
+}
+
+function Assert-LambdaUsesRole {
+    param(
+        [string]$FunctionName,
+        [string]$ExpectedRoleName,
+        [string]$Label
+    )
+
+    $roleArn = Get-LambdaRoleArn $FunctionName
+    $actualRoleName = Get-RoleNameFromArn $roleArn
+    if ($actualRoleName -ne $ExpectedRoleName) {
+        throw "Lambda $FunctionName uses role $actualRoleName, expected $ExpectedRoleName"
+    }
+    Assert-IamRoleExists -RoleName $actualRoleName -Label $Label
+    return $roleArn
+}
+
+function Assert-InlinePolicies {
+    param(
+        [string]$RoleName,
+        [string[]]$PolicyNames,
+        [string]$Label
+    )
+
+    $existing = ConvertTo-StringList (
+        Invoke-AwsJson `
+            -Arguments @("iam", "list-role-policies", "--role-name", $RoleName, "--query", "PolicyNames", "--output", "json") `
+            -Label "inline policy lookup for $RoleName"
+    )
+    $missing = @($PolicyNames | Where-Object { $existing -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        throw "Missing inline IAM policies for $Label ($RoleName): $($missing -join ', ')"
+    }
+    Write-Host "  ok inline policies ${Label}: $($PolicyNames -join ', ')"
+}
+
+function Assert-ManagedPolicies {
+    param(
+        [string]$RoleName,
+        [string[]]$PolicyArns,
+        [string]$Label
+    )
+
+    $existing = ConvertTo-StringList (
+        Invoke-AwsJson `
+            -Arguments @("iam", "list-attached-role-policies", "--role-name", $RoleName, "--query", "AttachedPolicies[].PolicyArn", "--output", "json") `
+            -Label "managed policy lookup for $RoleName"
+    )
+    $missing = @($PolicyArns | Where-Object { $existing -notcontains $_ })
+    if ($missing.Count -gt 0) {
+        throw "Missing managed IAM policies for $Label ($RoleName): $($missing -join ', ')"
+    }
+    Write-Host "  ok managed policies $Label"
 }
 
 function Get-LambdaEnvValue {
@@ -46,9 +217,9 @@ function Get-LambdaEnvValue {
         [string]$FunctionName,
         [string]$Name
     )
-    $config = aws lambda get-function-configuration `
-        --function-name $FunctionName `
-        --output json | ConvertFrom-Json
+    $config = Invoke-AwsJson `
+        -Arguments @("lambda", "get-function-configuration", "--function-name", $FunctionName, "--output", "json") `
+        -Label "Lambda environment lookup for $FunctionName"
     $variables = $config.Environment.Variables
     if ($variables -and $variables.PSObject.Properties.Name.Contains($Name)) {
         return $variables.PSObject.Properties[$Name].Value
@@ -93,7 +264,9 @@ function Assert-Allowed {
         $args += $ContextEntries
     }
 
-    $simulation = aws @args --output json | ConvertFrom-Json
+    $simulation = Invoke-AwsJson `
+        -Arguments ($args + @("--output", "json")) `
+        -Label "IAM simulation for $Label"
 
     $denied = @($simulation.EvaluationResults | Where-Object {
         $_.EvalDecision -ne "allowed"
@@ -109,12 +282,66 @@ function Assert-Allowed {
     Write-Host "  ok $Label"
 }
 
-$rawDispatchRole = Get-LambdaRoleArn $tf.raw_dispatch_lambda_name.value
-$validateInputRole = Get-LambdaRoleArn $tf.validate_input_lambda_name.value
-$processDocumentRole = Get-LambdaRoleArn $tf.process_document_lambda_name.value
-$publishMetricsRole = Get-LambdaRoleArn $tf.publish_metrics_lambda_name.value
+$rawDispatchName = $tf.raw_dispatch_lambda_name.value
+$validateInputName = $tf.validate_input_lambda_name.value
+$processDocumentName = $tf.process_document_lambda_name.value
+$publishMetricsName = $tf.publish_metrics_lambda_name.value
 $extractOcrName = Get-OptionalOutputValue "extract_ocr_lambda_name"
 $enrichLlmName = Get-OptionalOutputValue "enrich_llm_lambda_name"
+$stateMachineName = $tf.state_machine_name.value
+$stepFunctionRoleName = $tf.step_function_role_name.value
+$textractPolicyArn = $tf.textract_policy_arn.value
+$bedrockPolicyArn = $tf.bedrock_policy_arn.value
+
+$rawDispatchRoleName = "$rawDispatchName-role"
+$validateInputRoleName = "$validateInputName-role"
+$processDocumentRoleName = "$processDocumentName-role"
+$publishMetricsRoleName = "$publishMetricsName-role"
+
+$rawDispatchRole = Assert-LambdaUsesRole `
+    -FunctionName $rawDispatchName `
+    -ExpectedRoleName $rawDispatchRoleName `
+    -Label "raw_dispatch"
+$validateInputRole = Assert-LambdaUsesRole `
+    -FunctionName $validateInputName `
+    -ExpectedRoleName $validateInputRoleName `
+    -Label "validate_input"
+$processDocumentRole = Assert-LambdaUsesRole `
+    -FunctionName $processDocumentName `
+    -ExpectedRoleName $processDocumentRoleName `
+    -Label "process_document"
+$publishMetricsRole = Assert-LambdaUsesRole `
+    -FunctionName $publishMetricsName `
+    -ExpectedRoleName $publishMetricsRoleName `
+    -Label "publish_metrics"
+
+Assert-IamRoleExists -RoleName $stepFunctionRoleName -Label "step_functions"
+
+Assert-InlinePolicies `
+    -RoleName $rawDispatchRoleName `
+    -PolicyNames @("logging", "start_execution", "sqs_consume") `
+    -Label "raw_dispatch"
+Assert-InlinePolicies `
+    -RoleName $validateInputRoleName `
+    -PolicyNames @("logging") `
+    -Label "validate_input"
+Assert-InlinePolicies `
+    -RoleName $processDocumentRoleName `
+    -PolicyNames @("logging", "data_lake_access") `
+    -Label "process_document"
+Assert-InlinePolicies `
+    -RoleName $publishMetricsRoleName `
+    -PolicyNames @("logging", "cloudwatch_write") `
+    -Label "publish_metrics"
+Assert-InlinePolicies `
+    -RoleName $stepFunctionRoleName `
+    -PolicyNames @("${stateMachineName}-logging", "lambda_invoke") `
+    -Label "step_functions"
+
+Assert-ManagedPolicies `
+    -RoleName $processDocumentRoleName `
+    -PolicyArns @($textractPolicyArn, $bedrockPolicyArn) `
+    -Label "process_document"
 
 Assert-Allowed `
     -RoleArn $rawDispatchRole `
@@ -166,7 +393,7 @@ Assert-Allowed `
     -Resources @("*") `
     -Label "process_document Textract"
 
-$processBedrockResources = Get-BedrockResources -FunctionName $tf.process_document_lambda_name.value
+$processBedrockResources = Get-BedrockResources -FunctionName $processDocumentName
 if ($processBedrockResources.Count -gt 0) {
     Assert-Allowed `
         -RoleArn $processDocumentRole `
@@ -176,7 +403,20 @@ if ($processBedrockResources.Count -gt 0) {
 }
 
 if ($extractOcrName) {
-    $extractOcrRole = Get-LambdaRoleArn $extractOcrName
+    $extractOcrRoleName = "$extractOcrName-role"
+    $extractOcrRole = Assert-LambdaUsesRole `
+        -FunctionName $extractOcrName `
+        -ExpectedRoleName $extractOcrRoleName `
+        -Label "extract_ocr"
+    Assert-InlinePolicies `
+        -RoleName $extractOcrRoleName `
+        -PolicyNames @("logging", "data_lake_access") `
+        -Label "extract_ocr"
+    Assert-ManagedPolicies `
+        -RoleName $extractOcrRoleName `
+        -PolicyArns @($textractPolicyArn) `
+        -Label "extract_ocr"
+
     Assert-Allowed `
         -RoleArn $extractOcrRole `
         -Actions @("s3:GetObject") `
@@ -207,7 +447,20 @@ if ($extractOcrName) {
 }
 
 if ($enrichLlmName) {
-    $enrichLlmRole = Get-LambdaRoleArn $enrichLlmName
+    $enrichLlmRoleName = "$enrichLlmName-role"
+    $enrichLlmRole = Assert-LambdaUsesRole `
+        -FunctionName $enrichLlmName `
+        -ExpectedRoleName $enrichLlmRoleName `
+        -Label "enrich_llm"
+    Assert-InlinePolicies `
+        -RoleName $enrichLlmRoleName `
+        -PolicyNames @("logging", "data_lake_access") `
+        -Label "enrich_llm"
+    Assert-ManagedPolicies `
+        -RoleName $enrichLlmRoleName `
+        -PolicyArns @($bedrockPolicyArn) `
+        -Label "enrich_llm"
+
     Assert-Allowed `
         -RoleArn $enrichLlmRole `
         -Actions @("s3:GetObject") `
@@ -233,6 +486,44 @@ if ($enrichLlmName) {
             -Label "enrich_llm Bedrock"
     }
 }
+
+$lambdaArns = @(
+    $tf.validate_input_lambda_name.value,
+    $tf.process_document_lambda_name.value,
+    $extractOcrName,
+    $enrichLlmName,
+    $tf.publish_metrics_lambda_name.value
+) | Where-Object { $_ }
+
+$lambdaInvokeResources = @()
+foreach ($nameOrArn in $lambdaArns) {
+    if ($nameOrArn -like "arn:aws:lambda:*") {
+        $lambdaInvokeResources += $nameOrArn
+        $lambdaInvokeResources += "$nameOrArn`:*"
+    }
+    else {
+        $arn = Invoke-AwsText `
+            -Arguments @(
+                "lambda",
+                "get-function-configuration",
+                "--function-name",
+                $nameOrArn,
+                "--query",
+                "FunctionArn",
+                "--output",
+                "text"
+            ) `
+            -Label "Lambda ARN lookup for $nameOrArn"
+        $lambdaInvokeResources += $arn
+        $lambdaInvokeResources += "$arn`:*"
+    }
+}
+
+Assert-Allowed `
+    -RoleArn "arn:aws:iam::${accountId}:role/$stepFunctionRoleName" `
+    -Actions @("lambda:InvokeFunction") `
+    -Resources $lambdaInvokeResources `
+    -Label "step_functions Lambda invoke"
 
 Assert-Allowed `
     -RoleArn $publishMetricsRole `
