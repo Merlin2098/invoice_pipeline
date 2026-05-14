@@ -225,7 +225,7 @@ foreach ($execution in $executions) {
     Invoke-AwsRaw @("s3", "sync", "s3://$bucket/errors/silver_failed/run_id=$($execution.run_id)/", (Join-Path $s3Dir "silver_failed\run_id=$($execution.run_id)"))
 }
 
-$startMillis = [DateTimeOffset]$startedAt.ToUniversalTime().ToUnixTimeMilliseconds()
+$startMillis = ([DateTimeOffset]$startedAt.ToUniversalTime()).ToUnixTimeMilliseconds()
 $lambdaNames = @(
     "raw_dispatch_lambda_name",
     "validate_input_lambda_name",
