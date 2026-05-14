@@ -127,11 +127,10 @@ artifacts/lambda/   Generated Lambda deployment bundle
 docs/               Architecture notes, runbooks, prompts, and resources
 infra/envs/dev/     Executable Terraform entrypoint for the AWS MVP
 infra/modules/      Focused reusable Terraform modules
-scripts/aws/        AWS validation and smoke-test helpers
 scripts/windows/    Windows setup and Makefile wrapper helpers
 specs/              Contracts, quality rules, metrics, and design specs
 src/                Python pipeline and AWS runtime code
-tests/              Unit and pipeline tests with reference fixtures
+tests/              Unit tests, AWS smoke helpers, and reference fixtures
 ```
 
 The older `infra/` root stack is kept as a transition baseline; new AWS MVP work
@@ -145,9 +144,10 @@ should use `infra/envs/dev`.
 - `silver/valid/`: canonical accepted documents.
 - `silver/rejected/`: canonical documents rejected by quality or business rules.
 - `errors/`: technical processing failures, including failed silver documents.
-- `gold/documents/run_id=<run_id>/`: curated Parquet snapshot for a stable
-  silver run. Gold preserves accepted documents and marks cross-run duplicates
-  with `document_fingerprint`, `business_key`, and duplicate status fields.
+- `gold/documents/batch_id=<batch_id>/`: curated Parquet snapshot plus manifest
+  for a completed batch. Gold preserves accepted documents and marks cross-run
+  duplicates with `document_fingerprint`, `business_key`, and duplicate status
+  fields.
 
 ## Current Pipeline Design
 
@@ -220,12 +220,16 @@ only when the backend bucket and state policy are intentionally configured.
 
 ## Operational Scripts
 
-AWS helpers live in [`scripts/aws`](scripts/aws):
+AWS smoke and validation helpers live in [`tests/aws`](tests/aws):
 
 - `smoke-precheck.ps1` checks required local and AWS prerequisites.
 - `validate-iam.ps1` validates IAM assumptions and caller identity.
 - `validate-runtime-access.ps1` invokes deployed Lambdas with dry-run payloads.
 - `validate-event-mappings.ps1` checks event-source mapping wiring.
+- `validate-logging.ps1` checks CloudWatch log groups and retention.
+- `validate-tags-budget.ps1` checks required tags and budget filters.
+- `smoke-direct-raw-upload.ps1` uploads raw documents, invokes Gold finalization,
+  and downloads logs plus Bronze/Silver/Gold outputs.
 - `validate_run.ps1` supports deployed run validation.
 
 Windows workflow helpers live in [`scripts/windows`](scripts/windows):
@@ -240,7 +244,7 @@ Use the AWS smoke and validation scripts after Terraform outputs are available.
 The runtime dry-run check invokes each deployed Lambda with a safe payload:
 
 ```powershell
-.\scripts\aws\validate-runtime-access.ps1
+.\tests\aws\validate-runtime-access.ps1
 ```
 
 To trigger the actual pipeline after deployment, upload a supported document to

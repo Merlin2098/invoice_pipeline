@@ -1,153 +1,125 @@
-# validate-logging.ps1
-# Validates that runtime resources have declared CloudWatch logging.
-
 param(
     [string]$TerraformDir = "infra/envs/dev",
-    [string]$AwsRegion = "us-east-1"
+    [string]$ProjectName = "invoice-pipeline",
+    [string]$Environment = "dev",
+    [int]$ExpectedLambdaRetentionDays = 0,
+    [int]$ExpectedStepFunctionRetentionDays = 0,
+    [string]$AwsProfile = ""
 )
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-if (-not $env:AWS_DEFAULT_REGION) {
-    $env:AWS_DEFAULT_REGION = $AwsRegion
+
+function Resolve-RepoPath {
+    param([string]$PathValue)
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        return $PathValue
+    }
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    return Join-Path $repoRoot $PathValue
 }
 
-function Invoke-AwsText {
+function Get-TfvarsNumber {
     param(
-        [string[]]$Arguments,
-        [string]$Label
+        [string]$Name,
+        [int]$DefaultValue
     )
-
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = & aws @Arguments 2>&1
+    $tfvarsPath = Join-Path (Resolve-RepoPath $TerraformDir) "terraform.tfvars"
+    if (-not (Test-Path $tfvarsPath)) {
+        return $DefaultValue
     }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+    $content = Get-Content $tfvarsPath -Raw
+    $match = [regex]::Match($content, "(?m)^\s*$([regex]::Escape($Name))\s*=\s*(\d+)\s*$")
+    if (-not $match.Success) {
+        return $DefaultValue
     }
-    if ($LASTEXITCODE -ne 0) {
-        throw "AWS CLI failed for ${Label}: $($output -join [Environment]::NewLine)"
-    }
-    return ($output -join "`n").Trim()
+    return [int]$match.Groups[1].Value
 }
 
 function Invoke-AwsJson {
-    param(
-        [string[]]$Arguments,
-        [string]$Label
-    )
-
-    $text = Invoke-AwsText -Arguments $Arguments -Label $Label
-    if (-not $text) {
-        throw "AWS CLI returned empty JSON for $Label"
+    param([string[]]$Arguments)
+    $args = @()
+    if ($AwsProfile) {
+        $args += @("--profile", $AwsProfile)
     }
-    return $text | ConvertFrom-Json
+    $args += $Arguments
+    $output = & aws @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "aws $($Arguments -join ' ') failed"
+    }
+    if (-not $output) {
+        return $null
+    }
+    return ($output | Out-String | ConvertFrom-Json)
 }
 
 function Assert-LogGroup {
     param(
+        [string]$Label,
         [string]$LogGroupName,
-        [string]$Label
+        [int]$ExpectedRetentionDays
     )
-
-    $logGroup = Invoke-AwsJson `
-        -Arguments @("logs", "describe-log-groups", "--log-group-name-prefix", $LogGroupName, "--query", "logGroups[?logGroupName=='$LogGroupName'] | [0]", "--output", "json") `
-        -Label "CloudWatch log group lookup for $LogGroupName"
-    if ($null -eq $logGroup) {
-        throw "Missing CloudWatch log group for ${Label}: $LogGroupName"
+    $result = Invoke-AwsJson @(
+        "logs",
+        "describe-log-groups",
+        "--log-group-name-prefix",
+        $LogGroupName
+    )
+    $group = @($result.logGroups | Where-Object { $_.logGroupName -eq $LogGroupName }) | Select-Object -First 1
+    if (-not $group) {
+        throw "Missing log group for ${Label}: $LogGroupName"
     }
-    if ($null -eq $logGroup.retentionInDays -or "$($logGroup.retentionInDays)" -eq "") {
-        throw "CloudWatch log group has no retention for ${Label}: $LogGroupName"
+    if ([int]$group.retentionInDays -ne $ExpectedRetentionDays) {
+        throw "Unexpected retention for $Label ($LogGroupName): $($group.retentionInDays)"
     }
-    Write-Host "  ok log group $Label ($LogGroupName) retention=$($logGroup.retentionInDays)"
+    Write-Host "ok log group $Label ($LogGroupName) retention=$($group.retentionInDays)"
 }
 
-function Assert-LambdaLogging {
-    param([string]$FunctionName)
-
-    $config = Invoke-AwsJson `
-        -Arguments @("lambda", "get-function-configuration", "--function-name", $FunctionName, "--output", "json") `
-        -Label "Lambda configuration for $FunctionName"
-    if (-not $config.Role) {
-        throw "Lambda $FunctionName has no execution role"
-    }
-    if (-not $config.LoggingConfig -or -not $config.LoggingConfig.LogGroup) {
-        Assert-LogGroup -LogGroupName "/aws/lambda/$FunctionName" -Label "lambda $FunctionName"
-    }
-    else {
-        Assert-LogGroup -LogGroupName $config.LoggingConfig.LogGroup -Label "lambda $FunctionName"
-    }
+$prefix = ("{0}-{1}" -f $ProjectName, $Environment).ToLower().Replace("_", "-")
+$lambdaRetentionDays = if ($ExpectedLambdaRetentionDays -gt 0) {
+    $ExpectedLambdaRetentionDays
+} else {
+    Get-TfvarsNumber -Name "lambda_log_retention_in_days" -DefaultValue 30
+}
+$stepFunctionRetentionDays = if ($ExpectedStepFunctionRetentionDays -gt 0) {
+    $ExpectedStepFunctionRetentionDays
+} else {
+    Get-TfvarsNumber -Name "step_function_log_retention_in_days" -DefaultValue $lambdaRetentionDays
 }
 
-function Assert-StateMachineLogging {
-    param([string]$StateMachineArn)
-
-    $stateMachine = Invoke-AwsJson `
-        -Arguments @("stepfunctions", "describe-state-machine", "--state-machine-arn", $StateMachineArn, "--output", "json") `
-        -Label "Step Functions configuration for $StateMachineArn"
-    $logging = $stateMachine.loggingConfiguration
-    if ($null -eq $logging -or $logging.level -eq "OFF") {
-        throw "Step Functions logging is disabled for $StateMachineArn"
-    }
-    if (-not $logging.destinations -or $logging.destinations.Count -eq 0) {
-        throw "Step Functions logging has no CloudWatch destination for $StateMachineArn"
-    }
-
-    foreach ($destination in @($logging.destinations)) {
-        $arn = [string]$destination.cloudWatchLogsLogGroup.logGroupArn
-        if (-not $arn) {
-            throw "Step Functions logging destination is missing a log group ARN"
-        }
-        $logGroupName = ($arn -replace "^arn:aws:logs:[^:]+:[0-9]+:log-group:", "")
-        $logGroupName = $logGroupName -replace ":\*$", ""
-        Assert-LogGroup -LogGroupName $logGroupName -Label "state machine"
-    }
-    Write-Host "  ok state machine logging level=$($logging.level)"
-}
-
-function Assert-GlueLogging {
-    param([string]$JobName)
-
-    $job = Invoke-AwsJson `
-        -Arguments @("glue", "get-job", "--job-name", $JobName, "--output", "json") `
-        -Label "Glue job lookup for $JobName"
-    $args = $job.Job.DefaultArguments
-    if (-not $args -or $args."--enable-continuous-cloudwatch-log" -ne "true") {
-        throw "Glue job $JobName does not enable continuous CloudWatch logs"
-    }
-    Write-Host "  ok glue logging $JobName"
-}
-
-Push-Location $TerraformDir
-try {
-    $tf = terraform output -json | ConvertFrom-Json
-}
-finally {
-    Pop-Location
-}
-
-$lambdaOutputs = @(
-    "raw_dispatch_lambda_name",
-    "validate_input_lambda_name",
-    "process_document_lambda_name",
-    "extract_ocr_lambda_name",
-    "enrich_llm_lambda_name",
-    "publish_metrics_lambda_name"
+$lambdaFunctions = @(
+    "raw-dispatch",
+    "validate-input",
+    "process-document",
+    "extract-ocr",
+    "enrich-llm",
+    "publish-metrics",
+    "consolidate-gold"
 )
 
-foreach ($outputName in $lambdaOutputs) {
-    if ($tf.PSObject.Properties.Name.Contains($outputName)) {
-        Assert-LambdaLogging -FunctionName $tf.PSObject.Properties[$outputName].Value.value
-    }
+foreach ($function in $lambdaFunctions) {
+    Assert-LogGroup -Label "lambda $prefix-$function" -LogGroupName "/aws/lambda/$prefix-$function" -ExpectedRetentionDays $lambdaRetentionDays
 }
 
-Assert-StateMachineLogging -StateMachineArn $tf.state_machine_arn.value
-
-foreach ($optionalGlueOutput in @("normalize_job_name", "consolidate_job_name")) {
-    if ($tf.PSObject.Properties.Name.Contains($optionalGlueOutput)) {
-        Assert-GlueLogging -JobName $tf.PSObject.Properties[$optionalGlueOutput].Value.value
-    }
+$stateMachineLogGroup = "/aws/vendedlogs/states/$prefix-document-pipeline"
+$stateMachine = Invoke-AwsJson @(
+    "stepfunctions",
+    "list-state-machines",
+    "--query",
+    "stateMachines[?name=='$prefix-document-pipeline'] | [0]"
+)
+if (-not $stateMachine) {
+    throw "Missing state machine: $prefix-document-pipeline"
 }
+$stateMachineDescription = Invoke-AwsJson @(
+    "stepfunctions",
+    "describe-state-machine",
+    "--state-machine-arn",
+    [string]$stateMachine.stateMachineArn
+)
+Assert-LogGroup -Label "state machine" -LogGroupName $stateMachineLogGroup -ExpectedRetentionDays $stepFunctionRetentionDays
+if (-not $stateMachineDescription.loggingConfiguration -or $stateMachineDescription.loggingConfiguration.level -ne "ALL") {
+    throw "State machine logging must be enabled with level ALL"
+}
+Write-Host "ok state machine logging level=$($stateMachineDescription.loggingConfiguration.level)"
 
-Write-Host "`n[logging] OK" -ForegroundColor Green
+Write-Host "[logging] OK"

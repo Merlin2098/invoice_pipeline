@@ -38,7 +38,8 @@ Invoke-Step "Terraform outputs" {
         "raw_dispatch_lambda_name",
         "validate_input_lambda_name",
         "process_document_lambda_name",
-        "publish_metrics_lambda_name"
+        "publish_metrics_lambda_name",
+        "consolidate_gold_lambda_name"
     )
 
     foreach ($name in $required) {
@@ -49,7 +50,7 @@ Invoke-Step "Terraform outputs" {
 }
 
 Invoke-Step "IAM effective permissions" {
-    & "$scriptDir\validate-iam.ps1" -TerraformDir $TerraformDir
+    & "$scriptDir\validate-iam.ps1"
 }
 
 Invoke-Step "Lambda runtime dry runs" {
@@ -61,38 +62,7 @@ Invoke-Step "Event source mappings and DLQ" {
 }
 
 Invoke-Step "CloudWatch log groups" {
-    Push-Location $TerraformDir
-    try {
-        $tf = terraform output -json | ConvertFrom-Json
-    }
-    finally {
-        Pop-Location
-    }
-
-    $functionNames = @(
-        $tf.raw_dispatch_lambda_name.value,
-        $tf.validate_input_lambda_name.value,
-        $tf.process_document_lambda_name.value,
-        $tf.publish_metrics_lambda_name.value
-    )
-
-    foreach ($optionalOutput in @("extract_ocr_lambda_name", "enrich_llm_lambda_name")) {
-        if ($tf.PSObject.Properties.Name.Contains($optionalOutput)) {
-            $functionNames += $tf.PSObject.Properties[$optionalOutput].Value.value
-        }
-    }
-
-    foreach ($functionName in $functionNames) {
-        $groupName = "/aws/lambda/$functionName"
-        $retention = aws logs describe-log-groups `
-            --log-group-name-prefix $groupName `
-            --query "logGroups[?logGroupName=='$groupName'].retentionInDays | [0]" `
-            --output text
-        if ($retention -eq "None" -or -not $retention) {
-            throw "CloudWatch log group is missing retention: $groupName"
-        }
-        Write-Host "  ok $groupName retention=$retention"
-    }
+    & "$scriptDir\validate-logging.ps1" -TerraformDir $TerraformDir
 }
 
 Write-Host "`n[precheck] OK" -ForegroundColor Green

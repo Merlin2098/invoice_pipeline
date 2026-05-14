@@ -21,7 +21,7 @@ aws stepfunctions describe-state-machine `
 ## SPEC-004
 
 Runtime IAM validation is script-only. To roll back, revert the scripts under
-`scripts/aws/` and the `smoke-precheck.ps1` call in `validate_run.ps1`.
+`tests/aws/` and the `smoke-precheck.ps1` call in `validate_run.ps1`.
 
 ## SPEC-005
 
@@ -41,7 +41,7 @@ aws stepfunctions update-state-machine `
   --definition file://docs/snapshots/state_machine.2a3f984.deployed.asl.json
 ```
 
-Run `scripts/aws/validate_run.ps1` after rollback to confirm SQS, DLQ, Step
+Run `tests/aws/validate_run.ps1` after rollback to confirm SQS, DLQ, Step
 Functions, and S3 layer counts.
 
 ## Notes

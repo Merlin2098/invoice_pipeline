@@ -1,5 +1,5 @@
 # validate_run.ps1
-# Uso: .\scripts\aws\validate_run.ps1 -RunId "smoke-40-20260512T123456"
+# Uso: .\tests\aws\validate_run.ps1 -RunId "smoke-40-20260512T123456"
 # Si se omite RunId, detecta el ultimo run subido al bucket.
 
 param(

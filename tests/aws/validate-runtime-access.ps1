@@ -20,7 +20,8 @@ $functionOutputs = @(
     "raw_dispatch_lambda_name",
     "validate_input_lambda_name",
     "process_document_lambda_name",
-    "publish_metrics_lambda_name"
+    "publish_metrics_lambda_name",
+    "consolidate_gold_lambda_name"
 )
 
 foreach ($optionalOutput in @("extract_ocr_lambda_name", "enrich_llm_lambda_name")) {

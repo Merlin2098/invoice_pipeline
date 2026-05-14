@@ -1,260 +1,249 @@
-# smoke-direct-raw-upload.ps1
-# Uploads documents directly to raw/ without run_id folders, then downloads
-# matching execution details, CloudWatch logs, and S3 outputs for analysis.
-
 param(
     [string]$TerraformDir = "infra/envs/dev",
     [string]$SourceDir = "data/raw",
-    [int]$Limit = 5,
-    [int]$WaitSeconds = 180,
-    [string]$AwsRegion = "us-east-1",
-    [string]$OutputRoot = "logs"
+    [int]$Count = 5,
+    [int]$TimeoutSeconds = 900,
+    [int]$PollSeconds = 15,
+    [int]$GoldRetries = 10,
+    [int]$GoldRetrySeconds = 20,
+    [string]$AwsProfile = ""
 )
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-if (-not $env:AWS_DEFAULT_REGION) {
-    $env:AWS_DEFAULT_REGION = $AwsRegion
-}
 
-function Invoke-AwsText {
-    param(
-        [string[]]$Arguments,
-        [string]$Label
-    )
-
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = & aws @Arguments 2>&1
+function Resolve-RepoPath {
+    param([string]$PathValue)
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        return $PathValue
     }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
-    if ($LASTEXITCODE -ne 0) {
-        throw "AWS CLI failed for ${Label}: $($output -join [Environment]::NewLine)"
-    }
-    return ($output -join "`n").Trim()
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    return Join-Path $repoRoot $PathValue
 }
 
 function Invoke-AwsJson {
-    param(
-        [string[]]$Arguments,
-        [string]$Label
-    )
-
-    $text = Invoke-AwsText -Arguments $Arguments -Label $Label
-    if (-not $text) {
-        throw "AWS CLI returned empty JSON for $Label"
+    param([string[]]$Arguments)
+    $args = @()
+    if ($AwsProfile) {
+        $args += @("--profile", $AwsProfile)
     }
-    return $text | ConvertFrom-Json
-}
-
-function Copy-S3Prefix {
-    param(
-        [string]$SourceUri,
-        [string]$DestinationPath,
-        [string]$Label
-    )
-
-    New-Item -ItemType Directory -Force -Path $DestinationPath | Out-Null
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = & aws s3 sync $SourceUri $DestinationPath 2>&1
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $args += $Arguments
+    $output = & aws @args
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  warn could not sync $Label from $SourceUri" -ForegroundColor Yellow
-        ($output -join [Environment]::NewLine) | Out-File (Join-Path $DestinationPath "_sync_error.txt")
-        return
+        throw "aws $($Arguments -join ' ') failed"
     }
-    Write-Host "  ok downloaded $Label"
+    if (-not $output) {
+        return $null
+    }
+    return ($output | Out-String | ConvertFrom-Json)
 }
 
-function Get-ExecutionsByStatus {
-    param(
-        [string]$StateMachineArn,
-        [string]$Status
-    )
+function Invoke-AwsRaw {
+    param([string[]]$Arguments)
+    $args = @()
+    if ($AwsProfile) {
+        $args += @("--profile", $AwsProfile)
+    }
+    $args += $Arguments
+    & aws @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "aws $($Arguments -join ' ') failed"
+    }
+}
 
-    $result = Invoke-AwsJson `
-        -Arguments @(
+function Get-TerraformOutputs {
+    $resolvedTerraformDir = Resolve-RepoPath $TerraformDir
+    $output = terraform -chdir=$resolvedTerraformDir output -json 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "terraform output failed in ${resolvedTerraformDir}: $($output -join [Environment]::NewLine)"
+    }
+    return ($output | Out-String | ConvertFrom-Json)
+}
+
+function Get-OutputValue {
+    param(
+        [object]$Outputs,
+        [string]$Name
+    )
+    if (-not $Outputs.PSObject.Properties.Name.Contains($Name)) {
+        throw "Missing Terraform output: $Name"
+    }
+    return [string]$Outputs.$Name.value
+}
+
+function Get-DocumentId {
+    param([string]$FileName)
+    return [System.IO.Path]::GetFileNameWithoutExtension($FileName)
+}
+
+$startedAt = Get-Date
+$batchId = "direct-raw-smoke-{0}" -f $startedAt.ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$logRoot = Join-Path "logs" $batchId
+$cloudwatchDir = Join-Path $logRoot "cloudwatch"
+$s3Dir = Join-Path $logRoot "s3"
+$payloadDir = Join-Path $logRoot "payloads"
+New-Item -ItemType Directory -Force -Path $cloudwatchDir, $s3Dir, $payloadDir | Out-Null
+
+$outputs = Get-TerraformOutputs
+$bucket = Get-OutputValue $outputs "data_lake_bucket_name"
+$stateMachineArn = Get-OutputValue $outputs "state_machine_arn"
+$consolidateLambda = Get-OutputValue $outputs "consolidate_gold_lambda_name"
+
+$files = Get-ChildItem -Path $SourceDir -File |
+    Where-Object { $_.Extension.ToLowerInvariant() -in @(".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff") } |
+    Select-Object -First $Count
+if ($files.Count -lt $Count) {
+    throw "Expected at least $Count supported documents in $SourceDir, found $($files.Count)"
+}
+
+$uploads = @()
+for ($index = 0; $index -lt $files.Count; $index++) {
+    $file = $files[$index]
+    $safeName = $file.Name -replace "[^A-Za-z0-9._-]", "-"
+    $targetName = "{0}-{1:00}-{2}" -f $batchId, ($index + 1), $safeName
+    $sourceS3Key = "raw/$targetName"
+    Invoke-AwsRaw @("s3", "cp", $file.FullName, "s3://$bucket/$sourceS3Key")
+    $uploads += [pscustomobject]@{
+        local_path       = $file.FullName
+        source_s3_key   = $sourceS3Key
+        source_file_name = $targetName
+        document_id     = Get-DocumentId $targetName
+    }
+}
+
+$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$executionsByKey = @{}
+$terminalStatuses = @("SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED")
+
+while ((Get-Date) -lt $deadline) {
+    $list = Invoke-AwsJson @(
+        "stepfunctions",
+        "list-executions",
+        "--state-machine-arn",
+        $stateMachineArn,
+        "--max-results",
+        "100"
+    )
+    foreach ($execution in ($list.executions | Where-Object { $_ })) {
+        $description = Invoke-AwsJson @(
             "stepfunctions",
-            "list-executions",
-            "--state-machine-arn",
-            $StateMachineArn,
-            "--status-filter",
-            $Status,
-            "--max-results",
-            "100",
-            "--output",
-            "json"
-        ) `
-        -Label "Step Functions executions $Status"
-    return @($result.executions)
-}
-
-function Write-CloudWatchLogs {
-    param(
-        [string[]]$RunIds,
-        [string]$OutputDir,
-        [int64]$StartMs
-    )
-
-    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    $groups = @(
-        "/aws/lambda/invoice-pipeline-dev-raw-dispatch",
-        "/aws/lambda/invoice-pipeline-dev-validate-input",
-        "/aws/lambda/invoice-pipeline-dev-extract-ocr",
-        "/aws/lambda/invoice-pipeline-dev-enrich-llm",
-        "/aws/lambda/invoice-pipeline-dev-publish-metrics",
-        "/aws/vendedlogs/states/invoice-pipeline-dev-document-pipeline"
-    )
-
-    foreach ($group in $groups) {
-        $safeName = ($group -replace "[^a-zA-Z0-9_-]", "_").Trim("_")
-        $target = Join-Path $OutputDir "$safeName.txt"
-        $allMessages = New-Object System.Collections.Generic.List[string]
-        foreach ($runId in $RunIds) {
-            $messages = Invoke-AwsText `
-                -Arguments @(
-                    "logs",
-                    "filter-log-events",
-                    "--log-group-name",
-                    $group,
-                    "--start-time",
-                    "$StartMs",
-                    "--filter-pattern",
-                    "`"$runId`"",
-                    "--query",
-                    "events[].message",
-                    "--output",
-                    "text"
-                ) `
-                -Label "CloudWatch logs $group $runId"
-            if ($messages) {
-                $allMessages.Add("===== run_id=$runId =====")
-                $allMessages.Add($messages)
+            "describe-execution",
+            "--execution-arn",
+            [string]$execution.executionArn
+        )
+        $inputPayload = $description.input | ConvertFrom-Json
+        $sourceKey = [string]$inputPayload.source_s3_key
+        if ($uploads.source_s3_key -contains $sourceKey) {
+            $executionsByKey[$sourceKey] = [pscustomobject]@{
+                execution_arn    = [string]$description.executionArn
+                status           = [string]$description.status
+                run_id           = [string]$inputPayload.run_id
+                source_s3_key    = $sourceKey
+                source_file_name = [string]$inputPayload.source_file_name
+                document_id      = Get-DocumentId ([string]$inputPayload.source_file_name)
             }
         }
-        $allMessages | Out-File $target
     }
-}
 
-Push-Location $TerraformDir
-try {
-    $tf = terraform output -json | ConvertFrom-Json
-}
-finally {
-    Pop-Location
-}
-
-$lakeBucket = $tf.data_lake_bucket_name.value
-$stateMachineArn = $tf.state_machine_arn.value
-$smokeId = "direct-raw-smoke-$(Get-Date -Format 'yyyyMMddTHHmmss')"
-$outputDir = Join-Path $OutputRoot $smokeId
-$executionDir = Join-Path $outputDir "executions"
-$s3Dir = Join-Path $outputDir "s3"
-$cwDir = Join-Path $outputDir "cloudwatch"
-New-Item -ItemType Directory -Force -Path $executionDir, $s3Dir, $cwDir | Out-Null
-
-$files = @(Get-ChildItem -Path $SourceDir -File | Select-Object -First $Limit)
-if ($files.Count -eq 0) {
-    throw "No files found in $SourceDir"
-}
-if ($files.Count -lt $Limit) {
-    Write-Host "  warn requested $Limit files but found only $($files.Count)" -ForegroundColor Yellow
-}
-
-$startMs = [DateTimeOffset]::UtcNow.AddMinutes(-2).ToUnixTimeMilliseconds()
-$uploaded = @()
-
-Write-Host "`n[1/6] Uploading $($files.Count) document(s) directly to raw/ ..." -ForegroundColor Cyan
-foreach ($file in $files) {
-    $key = "raw/$($file.Name)"
-    $uri = "s3://$lakeBucket/$key"
-    aws s3 cp $file.FullName $uri | Out-Host
-    $uploaded += [PSCustomObject]@{
-        file = $file.Name
-        source_s3_key = $key
-        s3_uri = $uri
+    $matched = $executionsByKey.Values
+    $terminal = @($matched | Where-Object { $terminalStatuses -contains $_.status })
+    Write-Host ("matched executions {0}/{1}; terminal {2}/{1}" -f @($matched).Count, $uploads.Count, $terminal.Count)
+    if (@($matched).Count -eq $uploads.Count -and $terminal.Count -eq $uploads.Count) {
+        break
     }
+    Start-Sleep -Seconds $PollSeconds
 }
-$uploaded | ConvertTo-Json -Depth 4 | Out-File (Join-Path $outputDir "uploaded_manifest.json")
 
-Write-Host "`n[2/6] Waiting $WaitSeconds seconds for the pipeline ..." -ForegroundColor Cyan
-Start-Sleep -Seconds $WaitSeconds
+$executions = @($executionsByKey.Values)
+if ($executions.Count -ne $uploads.Count) {
+    throw "Timed out before discovering all Step Functions executions"
+}
+$notTerminal = @($executions | Where-Object { $terminalStatuses -notcontains $_.status })
+if ($notTerminal.Count -gt 0) {
+    throw "Timed out before all executions reached terminal status"
+}
 
-Write-Host "`n[3/6] Discovering generated run_id values from Step Functions ..." -ForegroundColor Cyan
-$uploadedKeys = @($uploaded | ForEach-Object { $_.source_s3_key })
-$statuses = @("RUNNING", "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED")
-$matched = New-Object System.Collections.Generic.List[object]
-
-foreach ($status in $statuses) {
-    $executions = Get-ExecutionsByStatus -StateMachineArn $stateMachineArn -Status $status
-    foreach ($execution in $executions) {
-        $detail = Invoke-AwsJson `
-            -Arguments @("stepfunctions", "describe-execution", "--execution-arn", $execution.executionArn, "--output", "json") `
-            -Label "Step Functions execution detail $($execution.name)"
-        $inputPayload = $null
-        try {
-            $inputPayload = $detail.input | ConvertFrom-Json
-        }
-        catch {
-            continue
-        }
-        if ($uploadedKeys -contains $inputPayload.source_s3_key) {
-            $safeName = $execution.name -replace "[^a-zA-Z0-9_-]", "_"
-            $detail | ConvertTo-Json -Depth 10 | Out-File (Join-Path $executionDir "$safeName.json")
-            $matched.Add([PSCustomObject]@{
-                name = $execution.name
-                status = $detail.status
-                execution_arn = $execution.executionArn
-                run_id = $inputPayload.run_id
-                source_s3_key = $inputPayload.source_s3_key
-                source_file_name = $inputPayload.source_file_name
-                start_date = $detail.startDate
-                stop_date = $detail.stopDate
-            })
+$expectedDocuments = @(
+    $executions | ForEach-Object {
+        [ordered]@{
+            run_id           = $_.run_id
+            document_id      = $_.document_id
+            source_s3_key    = $_.source_s3_key
+            source_file_name = $_.source_file_name
         }
     }
+)
+
+$goldPayloadPath = Join-Path $payloadDir "consolidate-gold-input.json"
+$goldResponsePath = Join-Path $payloadDir "consolidate-gold-response.json"
+$goldPayload = [ordered]@{
+    batch_id           = $batchId
+    expected_documents = $expectedDocuments
+    run_ids            = @($executions | ForEach-Object { $_.run_id } | Sort-Object -Unique)
+    data_lake_bucket   = $bucket
+}
+$goldPayload | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $goldPayloadPath
+
+$goldResult = $null
+for ($attempt = 1; $attempt -le $GoldRetries; $attempt++) {
+    Invoke-AwsRaw @(
+        "lambda",
+        "invoke",
+        "--function-name",
+        $consolidateLambda,
+        "--cli-binary-format",
+        "raw-in-base64-out",
+        "--payload",
+        "file://$goldPayloadPath",
+        $goldResponsePath
+    )
+    $goldResult = Get-Content $goldResponsePath -Raw | ConvertFrom-Json
+    Write-Host "gold finalizer attempt $attempt -> $($goldResult.status)"
+    if ($goldResult.status -ne "incomplete") {
+        break
+    }
+    Start-Sleep -Seconds $GoldRetrySeconds
+}
+if ($goldResult.status -eq "incomplete") {
+    throw "Gold finalizer remained incomplete after $GoldRetries attempts"
 }
 
-if ($matched.Count -eq 0) {
-    throw "No Step Functions executions were found for uploaded keys. Check raw-dispatch logs in AWS."
+Invoke-AwsRaw @("s3", "sync", "s3://$bucket/gold/documents/batch_id=$batchId/", (Join-Path $s3Dir "gold"))
+foreach ($execution in $executions) {
+    Invoke-AwsRaw @("s3", "sync", "s3://$bucket/bronze/textract-json/run_id=$($execution.run_id)/", (Join-Path $s3Dir "bronze\run_id=$($execution.run_id)"))
+    Invoke-AwsRaw @("s3", "sync", "s3://$bucket/silver/valid/run_id=$($execution.run_id)/", (Join-Path $s3Dir "silver_valid\run_id=$($execution.run_id)"))
+    Invoke-AwsRaw @("s3", "sync", "s3://$bucket/silver/rejected/run_id=$($execution.run_id)/", (Join-Path $s3Dir "silver_rejected\run_id=$($execution.run_id)"))
+    Invoke-AwsRaw @("s3", "sync", "s3://$bucket/errors/silver_failed/run_id=$($execution.run_id)/", (Join-Path $s3Dir "silver_failed\run_id=$($execution.run_id)"))
 }
 
-$matched | Sort-Object source_s3_key, start_date -Descending |
-    ConvertTo-Json -Depth 6 |
-    Out-File (Join-Path $outputDir "matched_executions.json")
-
-$runIds = @($matched | ForEach-Object { $_.run_id } | Sort-Object -Unique)
-$runIds | Out-File (Join-Path $outputDir "run_ids.txt")
-Write-Host "  found run_id(s): $($runIds -join ', ')"
-
-Write-Host "`n[4/6] Downloading CloudWatch logs into $cwDir ..." -ForegroundColor Cyan
-Write-CloudWatchLogs -RunIds $runIds -OutputDir $cwDir -StartMs $startMs
-
-Write-Host "`n[5/6] Downloading S3 outputs by generated run_id ..." -ForegroundColor Cyan
-foreach ($runId in $runIds) {
-    $runDir = Join-Path $s3Dir "run_id=$runId"
-    Copy-S3Prefix -SourceUri "s3://$lakeBucket/bronze/textract-json/run_id=$runId/" -DestinationPath (Join-Path $runDir "bronze") -Label "bronze $runId"
-    Copy-S3Prefix -SourceUri "s3://$lakeBucket/silver/valid/run_id=$runId/" -DestinationPath (Join-Path $runDir "silver_valid") -Label "silver valid $runId"
-    Copy-S3Prefix -SourceUri "s3://$lakeBucket/silver/rejected/run_id=$runId/" -DestinationPath (Join-Path $runDir "silver_rejected") -Label "silver rejected $runId"
-    Copy-S3Prefix -SourceUri "s3://$lakeBucket/gold/documents/run_id=$runId/" -DestinationPath (Join-Path $runDir "gold") -Label "gold parquet $runId"
+$startMillis = [DateTimeOffset]$startedAt.ToUniversalTime().ToUnixTimeMilliseconds()
+$lambdaNames = @(
+    "raw_dispatch_lambda_name",
+    "validate_input_lambda_name",
+    "extract_ocr_lambda_name",
+    "enrich_llm_lambda_name",
+    "publish_metrics_lambda_name",
+    "consolidate_gold_lambda_name"
+)
+foreach ($outputName in $lambdaNames) {
+    $lambdaName = Get-OutputValue $outputs $outputName
+    $logFile = Join-Path $cloudwatchDir ("/aws/lambda/$lambdaName".TrimStart("/") -replace "/", "_")
+    $events = Invoke-AwsJson @(
+        "logs",
+        "filter-log-events",
+        "--log-group-name",
+        "/aws/lambda/$lambdaName",
+        "--start-time",
+        [string]$startMillis
+    )
+    $events | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 "$logFile.json"
 }
 
-Write-Host "`n[6/6] Summary" -ForegroundColor Cyan
-$summary = [PSCustomObject]@{
-    smoke_id = $smokeId
-    uploaded_count = $uploaded.Count
-    matched_execution_count = $matched.Count
-    run_ids = $runIds
-    output_dir = $outputDir
+$summary = [ordered]@{
+    batch_id    = $batchId
+    bucket      = $bucket
+    executions  = $executions
+    gold_result = $goldResult
+    output_dir  = $logRoot
 }
-$summary | ConvertTo-Json -Depth 5 | Tee-Object (Join-Path $outputDir "summary.json")
-
-Write-Host "`nDirect raw upload smoke artifacts written to: $outputDir" -ForegroundColor Green
+$summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 (Join-Path $logRoot "summary.json")
+$summary | ConvertTo-Json -Depth 8
