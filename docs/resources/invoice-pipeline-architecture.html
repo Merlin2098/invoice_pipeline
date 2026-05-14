@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f1117;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #e0e0e0;
+    padding: 24px;
+    min-width: 1200px;
+  }
+
+  .title {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 11px;
+    color: #6b7280;
+    margin-bottom: 6px;
+  }
+  .region-badge {
+    text-align: center;
+    font-size: 9.5px;
+    color: #9ca3af;
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 6px;
+    padding: 3px 14px;
+    margin: 0 auto 16px;
+    display: inline-block;
+    left: 50%; position: relative; transform: translateX(-50%);
+  }
+
+  .legend {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #9ca3af; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+
+  .lane-container {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    overflow-x: auto;
+  }
+
+  .lane {
+    border-radius: 14px;
+    padding: 14px 11px;
+    flex-shrink: 0;
+  }
+  .lane-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+
+  .lane-ingest    { background: rgba(59,130,246,0.07); border: 1.5px solid rgba(59,130,246,0.28); width: 172px; }
+  .lane-ingest    .lane-label { color: #60a5fa; }
+  .lane-sfn       { background: rgba(168,85,247,0.07); border: 1.5px solid rgba(168,85,247,0.28); width: 155px; }
+  .lane-sfn       .lane-label { color: #c084fc; }
+  .lane-pipeline  { background: rgba(34,197,94,0.07); border: 1.5px solid rgba(34,197,94,0.28); width: 175px; }
+  .lane-pipeline  .lane-label { color: #4ade80; }
+  .lane-aws       { background: rgba(251,146,60,0.07); border: 1.5px solid rgba(251,146,60,0.28); width: 160px; }
+  .lane-aws       .lane-label { color: #fb923c; }
+  .lane-storage   { background: rgba(234,179,8,0.07); border: 1.5px solid rgba(234,179,8,0.28); width: 172px; }
+  .lane-storage   .lane-label { color: #facc15; }
+  .lane-analytics { background: rgba(236,72,153,0.07); border: 1.5px solid rgba(236,72,153,0.28); width: 175px; }
+  .lane-analytics .lane-label { color: #f472b6; }
+
+  .node {
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin-bottom: 10px;
+    font-size: 10.5px;
+    line-height: 1.45;
+    border: 1px solid transparent;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .node:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+  .node-title { font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+  .node-sub { font-size: 9.5px; opacity: 0.75; font-family: 'Courier New', monospace; }
+  .node-badge {
+    display: inline-block; font-size: 8px; padding: 1px 5px;
+    border-radius: 4px; margin-top: 4px; font-weight: 600;
+  }
+
+  .n-s3       { background: #1e1a08; border-color: #854d0e; color: #fde68a; }
+  .n-s3       .node-title { color: #fbbf24; }
+  .n-sqs      { background: #0d1a2e; border-color: #1e40af; color: #bfdbfe; }
+  .n-sqs      .node-title { color: #60a5fa; }
+  .n-dlq      { background: #1e0d0d; border-color: #991b1b; color: #fca5a5; }
+  .n-dlq      .node-title { color: #f87171; }
+  .n-lambda   { background: #0d1e12; border-color: #166534; color: #bbf7d0; }
+  .n-lambda   .node-title { color: #4ade80; }
+  .n-sfn      { background: #180d2e; border-color: #581c87; color: #e9d5ff; }
+  .n-sfn      .node-title { color: #c084fc; }
+  .n-textract { background: #1e1208; border-color: #92400e; color: #fed7aa; }
+  .n-textract .node-title { color: #fb923c; }
+  .n-bedrock  { background: #1e0a1a; border-color: #86198f; color: #f5d0fe; }
+  .n-bedrock  .node-title { color: #e879f9; }
+  .n-cw       { background: #0a1a1e; border-color: #155e75; color: #a5f3fc; }
+  .n-cw       .node-title { color: #22d3ee; }
+  .n-glue     { background: #1e0a08; border-color: #9f1239; color: #fecdd3; }
+  .n-glue     .node-title { color: #fb7185; }
+  .n-athena   { background: #080d1e; border-color: #3730a3; color: #c7d2fe; }
+  .n-athena   .node-title { color: #818cf8; }
+  .n-cli      { background: #0a1a0a; border-color: #14532d; color: #bbf7d0; }
+  .n-cli      .node-title { color: #86efac; }
+
+  .badge-s3     { background: #854d0e; color: #fef08a; }
+  .badge-sqs    { background: #1e40af; color: #bfdbfe; }
+  .badge-lambda { background: #166534; color: #bbf7d0; }
+  .badge-sfn    { background: #581c87; color: #e9d5ff; }
+  .badge-ext    { background: #7c2d12; color: #fed7aa; }
+
+  /* Flows section */
+  .flows-section {
+    margin-top: 22px;
+    border-top: 1px solid #1f2937;
+    padding-top: 16px;
+  }
+  .flows-title {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: #4b5563; margin-bottom: 12px; text-align: center;
+  }
+  .flow-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .flow-item {
+    display: flex; align-items: center; gap: 5px;
+    background: #111827; border: 1px solid #1f2937; border-radius: 8px;
+    padding: 5px 10px; font-size: 9px;
+  }
+  .flow-src  { color: #9ca3af; font-weight: 600; }
+  .flow-arr  { color: #374151; font-size: 13px; }
+  .flow-dst  { color: #e5e7eb; font-weight: 600; }
+  .flow-lbl  { color: #6b7280; font-style: italic; }
+  .flow-dashed { border-style: dashed; border-color: #7f1d1d; }
+  .flow-dashed .flow-arr { color: #991b1b; }
+</style>
+</head>
+<body>
+
+  <div class="title">Invoice Pipeline — SQS-Decoupled AWS MVP Architecture</div>
+  <div class="subtitle">dev environment &nbsp;·&nbsp; event-driven &nbsp;·&nbsp; serverless</div>
+  <div class="region-badge">🌎 Region: us-east-1 (N. Virginia)</div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#854d0e"></div>S3 Storage</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1e40af"></div>SQS Queue</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#166534"></div>Lambda Function</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#581c87"></div>Step Functions</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7c2d12"></div>AWS Managed Services</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3730a3"></div>Analytics Layer</div>
+  </div>
+
+  <div class="lane-container">
+
+    <!-- INGESTA -->
+    <div class="lane lane-ingest">
+      <div class="lane-label">📥 Ingesta</div>
+      <div class="node n-s3">
+        <div class="node-title">🪣 S3 Raw</div>
+        <div class="node-sub">raw/<br>raw/run_id=&lt;id&gt;/</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-sqs">
+        <div class="node-title">📨 SQS Queue</div>
+        <div class="node-sub">raw-ingestion<br>visibility=6× timeout<br>batch=1 · max_conc=5</div>
+        <span class="node-badge badge-sqs">SQS Standard</span>
+      </div>
+      <div class="node n-dlq">
+        <div class="node-title">☠️ SQS DLQ</div>
+        <div class="node-sub">raw-ingestion-dlq<br>maxReceive=3<br>retention=14d</div>
+        <span class="node-badge" style="background:#991b1b;color:#fca5a5;">DLQ</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ raw-dispatch</div>
+        <div class="node-sub">start_raw_ingestion<br>auto run_id si ausente</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+    </div>
+
+    <!-- STEP FUNCTIONS -->
+    <div class="lane lane-sfn">
+      <div class="lane-label">🔷 Orquestación</div>
+      <div class="node n-sfn">
+        <div class="node-title">⬡ Step Functions</div>
+        <div class="node-sub">document-pipeline<br><br>execution_name=<br>{run_id}-{stem}-{idx}</div>
+        <span class="node-badge badge-sfn">SFN</span>
+      </div>
+    </div>
+
+    <!-- PIPELINE LAMBDAS -->
+    <div class="lane lane-pipeline">
+      <div class="lane-label">⚙️ Pipeline Steps</div>
+      <div class="node n-lambda">
+        <div class="node-title">λ validate-input</div>
+        <div class="node-sub">ValidateInput<br>schema enforcement</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ extract-ocr</div>
+        <div class="node-sub">Textract AnalyzeExpense<br>bronze persistence</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ enrich-llm</div>
+        <div class="node-sub">Bedrock normalization<br>silver / error write</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ publish-metrics</div>
+        <div class="node-sub">CloudWatch custom<br>metrics por stage</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ consolidate-gold</div>
+        <div class="node-sub">post-batch finalizer<br>Parquet + manifest</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+    </div>
+
+    <!-- AWS SERVICES -->
+    <div class="lane lane-aws">
+      <div class="lane-label">☁️ AWS Services</div>
+      <div class="node n-textract">
+        <div class="node-title">📄 Textract</div>
+        <div class="node-sub">AnalyzeExpense<br>document OCR</div>
+        <span class="node-badge badge-ext">AI/ML</span>
+      </div>
+      <div class="node n-bedrock">
+        <div class="node-title">🧠 Bedrock</div>
+        <div class="node-sub">InvokeModel<br>optional enrichment<br>Converse API</div>
+        <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
+      </div>
+      <div class="node n-cw">
+        <div class="node-title">📊 CloudWatch</div>
+        <div class="node-sub">Logs + Metrics<br>PutMetricData<br>workgroup metrics</div>
+        <span class="node-badge" style="background:#155e75;color:#a5f3fc;">OBS</span>
+      </div>
+    </div>
+
+    <!-- STORAGE -->
+    <div class="lane lane-storage">
+      <div class="lane-label">🪣 Data Lake (S3)</div>
+      <div class="node n-s3" style="border-color:#78350f;">
+        <div class="node-title">🟫 Bronze</div>
+        <div class="node-sub">bronze/textract-json/<br>technical evidence</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-s3">
+        <div class="node-title">🩶 Silver</div>
+        <div class="node-sub">silver/valid/<br>silver/rejected/</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-dlq" style="border-color:#7f1d1d;">
+        <div class="node-title">❌ Errors</div>
+        <div class="node-sub">errors/<br>technical failures</div>
+        <span class="node-badge" style="background:#7f1d1d;color:#fca5a5;">S3</span>
+      </div>
+      <div class="node n-s3" style="border-color:#a16207;">
+        <div class="node-title">🥇 Gold</div>
+        <div class="node-sub">gold/documents/<br>batch_id=&lt;id&gt;/<br>Parquet + dup flags</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-s3" style="border-color:#78350f;">
+        <div class="node-title">📋 Manifests</div>
+        <div class="node-sub">gold/manifests/<br>batch_id=&lt;id&gt;/<br>fuera de Athena path</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-s3" style="border-color:#713f12; opacity:0.85;">
+        <div class="node-title">🔍 Athena Results</div>
+        <div class="node-sub">athena-results/<br>query output location</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="lane lane-analytics">
+      <div class="lane-label">📊 Analytics</div>
+      <div class="node n-glue">
+        <div class="node-title">🗂️ Glue Catalog</div>
+        <div class="node-sub">db: invoice_pipeline_gold<br>table: gold_documents<br>partitioned by batch_id</div>
+        <span class="node-badge" style="background:#9f1239;color:#fecdd3;">Glue</span>
+      </div>
+      <div class="node n-athena">
+        <div class="node-title">🔎 Athena</div>
+        <div class="node-sub">wg: invoice-pipeline-dev<br>scan limit: 100 MB/q<br>StartQueryExecution</div>
+        <span class="node-badge" style="background:#3730a3;color:#c7d2fe;">Athena</span>
+      </div>
+      <div class="node n-bedrock">
+        <div class="node-title">🧠 Bedrock SQL</div>
+        <div class="node-sub">NL → Athena SQL<br>Converse API<br>schema + system prompt</div>
+        <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
+      </div>
+      <div class="node n-cli">
+        <div class="node-title">💻 Analytics CLI</div>
+        <div class="node-sub">repair-partitions<br>sql · ask<br>SELECT-only validator</div>
+        <span class="node-badge" style="background:#14532d;color:#bbf7d0;">CLI</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FLUJOS -->
+  <div class="flows-section">
+    <div class="flows-title">→ Flujos de Datos</div>
+    <div class="flow-list">
+      <div class="flow-item"><span class="flow-src">S3 Raw</span><span class="flow-arr">→</span><span class="flow-dst">SQS Queue</span><span class="flow-lbl">s3:ObjectCreated · raw/ prefix</span></div>
+      <div class="flow-item flow-dashed"><span class="flow-src">SQS</span><span class="flow-arr">⇢</span><span class="flow-dst">DLQ</span><span class="flow-lbl">after 3 failures · redrive</span></div>
+      <div class="flow-item"><span class="flow-src">SQS</span><span class="flow-arr">→</span><span class="flow-dst">λ raw-dispatch</span><span class="flow-lbl">event source mapping · batch=1</span></div>
+      <div class="flow-item"><span class="flow-src">λ raw-dispatch</span><span class="flow-arr">→</span><span class="flow-dst">Step Functions</span><span class="flow-lbl">StartExecution {run_id}-{stem}-{idx}</span></div>
+      <div class="flow-item"><span class="flow-src">SFN</span><span class="flow-arr">→</span><span class="flow-dst">validate → extract-ocr → enrich-llm</span></div>
+      <div class="flow-item"><span class="flow-src">extract-ocr</span><span class="flow-arr">→</span><span class="flow-dst">Textract + S3 Bronze</span><span class="flow-lbl">AnalyzeExpense</span></div>
+      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock</span><span class="flow-lbl">InvokeModel (opcional)</span></div>
+      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Silver / Errors</span><span class="flow-lbl">valid · rejected · failed</span></div>
+      <div class="flow-item"><span class="flow-src">publish-metrics</span><span class="flow-arr">→</span><span class="flow-dst">CloudWatch</span><span class="flow-lbl">PutMetricData por stage</span></div>
+      <div class="flow-item"><span class="flow-src">Silver + Errors</span><span class="flow-arr">→</span><span class="flow-dst">consolidate-gold</span><span class="flow-lbl">terminal outputs</span></div>
+      <div class="flow-item"><span class="flow-src">consolidate-gold</span><span class="flow-arr">→</span><span class="flow-dst">Gold + Manifests</span><span class="flow-lbl">batch complete · Parquet</span></div>
+      <div class="flow-item"><span class="flow-src">S3 Gold</span><span class="flow-arr">→</span><span class="flow-dst">Glue Catalog</span><span class="flow-lbl">MSCK REPAIR TABLE · batch_id</span></div>
+      <div class="flow-item"><span class="flow-src">CLI ask</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock SQL → Athena</span><span class="flow-lbl">NL → SQL → results</span></div>
+      <div class="flow-item"><span class="flow-src">Athena</span><span class="flow-arr">→</span><span class="flow-dst">Glue + Gold + Results</span><span class="flow-lbl">scans Parquet partitions</span></div>
+    </div>
+  </div>
+
+</body>
+</html>
