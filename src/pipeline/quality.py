@@ -79,6 +79,12 @@ def canonical_document_template() -> dict[str, Any]:
         "quality_flags": [],
         "rejection_reason": None,
         "reason_code": None,
+        "document_fingerprint": None,
+        "business_key": None,
+        "is_duplicate": False,
+        "duplicate_of_document_id": None,
+        "duplicate_strategy": "none",
+        "duplicate_confidence": 0.0,
         "created_at": None,
     }
 

@@ -2,7 +2,11 @@ import json
 import logging
 from typing import Any
 
-from src.aws.glue_jobs.consolidate_gold import consolidate_gold_documents, gold_metrics_preview
+from src.aws.glue_jobs.consolidate_gold import (
+    consolidate_gold_documents,
+    consolidate_gold_run,
+    gold_metrics_preview,
+)
 from src.aws.glue_jobs.normalize_documents import normalize_bronze_documents
 from src.aws.lambda_handlers.control_plane import (
     enrich_with_llm,
@@ -236,6 +240,88 @@ def test_start_raw_ingestion_starts_step_function_from_s3_event(monkeypatch) -> 
     assert calls[0]["stateMachineArn"] == "arn:aws:states:::stateMachine:test"
     assert '"run_id": "run-1"' in calls[0]["input"]
     assert '"execution_id": "run-1-sample-0"' in calls[0]["input"]
+
+
+def test_start_raw_ingestion_generates_run_id_for_direct_raw_upload(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeStepFunctionsClient:
+        def start_execution(self, **kwargs: Any) -> dict[str, str]:
+            calls.append(kwargs)
+            return {"executionArn": "arn:aws:states:::execution:test"}
+
+    class FakeBoto3:
+        def client(self, service_name: str) -> FakeStepFunctionsClient:
+            assert service_name == "stepfunctions"
+            return FakeStepFunctionsClient()
+
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane._optional_boto3",
+        lambda: FakeBoto3(),
+    )
+    monkeypatch.setenv("STATE_MACHINE_ARN", "arn:aws:states:::stateMachine:test")
+
+    result = start_raw_ingestion(
+        {
+            "Records": [
+                {
+                    "eventSource": "aws:s3",
+                    "s3": {
+                        "bucket": {"name": "lake-bucket"},
+                        "object": {"key": "raw/sample.pdf"},
+                    },
+                }
+            ]
+        }
+    )
+
+    payload = json.loads(calls[0]["input"])
+    assert result["started"] == 1
+    assert payload["run_id"].startswith("invoice-pipeline-aws-")
+    assert payload["source_s3_key"] == "raw/sample.pdf"
+
+
+def test_consolidate_gold_run_filters_current_run_and_marks_history_duplicate() -> None:
+    records = [
+        {
+            "run_id": "run-1",
+            "document_id": "invoice",
+            "source_s3_key": "raw/invoice.tif",
+            "source_file_name": "invoice.tif",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "total_amount": 10.0,
+            "vendor_name": "Acme",
+            "currency": "USD",
+            "processing_status": "accepted",
+            "quality_status": "accepted",
+            "quality_flags": [],
+            "created_at": "2026-05-06T00:00:00Z",
+            "document_fingerprint": "same-sha256",
+        },
+        {
+            "run_id": "run-2",
+            "document_id": "invoice-copy",
+            "source_s3_key": "raw/invoice-copy.tif",
+            "source_file_name": "invoice-copy.tif",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "total_amount": 10.0,
+            "vendor_name": "Acme",
+            "currency": "USD",
+            "processing_status": "accepted",
+            "quality_status": "accepted",
+            "quality_flags": [],
+            "created_at": "2026-05-06T00:00:00Z",
+            "document_fingerprint": "same-sha256",
+        },
+    ]
+
+    gold = consolidate_gold_run(records, run_id="run-2")
+
+    assert list(gold["document_id"]) == ["invoice-copy"]
+    assert bool(gold.loc[0, "is_duplicate"]) is True
+    assert gold.loc[0, "duplicate_of_document_id"] == "invoice"
 
 
 def test_process_document_writes_valid_silver_output(monkeypatch) -> None:

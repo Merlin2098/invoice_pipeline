@@ -10,6 +10,11 @@ required:
   - processing_status
   - quality_status
   - quality_flags
+  - document_fingerprint
+  - business_key
+  - is_duplicate
+  - duplicate_strategy
+  - duplicate_confidence
   - created_at
 properties:
   run_id:
@@ -60,7 +65,26 @@ properties:
     type:
       - string
       - "null"
+  document_fingerprint:
+    type: string
+  business_key:
+    type:
+      - string
+      - "null"
+  is_duplicate:
+    type: boolean
+  duplicate_of_document_id:
+    type:
+      - string
+      - "null"
+  duplicate_strategy:
+    type: string
+    enum:
+      - exact_fingerprint
+      - business_key
+      - none
+  duplicate_confidence:
+    type: number
   created_at:
     type: string
     format: date-time
-

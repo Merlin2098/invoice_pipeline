@@ -24,7 +24,7 @@ digraph invoice_pipeline_dev {
     ]
 
     s3_raw [
-        label     = "S3 data lake\nraw/run_id=<run_id>/"
+        label     = "S3 data lake\nraw/ or raw/run_id=<run_id>/"
         fillcolor = "#fff3cd"
     ]
 
@@ -39,7 +39,7 @@ digraph invoice_pipeline_dev {
     ]
 
     raw_dispatch [
-        label     = "Lambda\nraw-dispatch\nstart_raw_ingestion"
+        label     = "Lambda\nraw-dispatch\nstart_raw_ingestion\nauto run_id when absent"
         fillcolor = "#d1e7dd"
     ]
 
@@ -103,8 +103,7 @@ digraph invoice_pipeline_dev {
     ]
 
     s3_gold [
-        label     = "S3 data lake\ngold/documents/\nplanned, not yet validated"
-        style     = "rounded,filled,dashed"
+        label     = "S3 data lake\ngold/documents/run_id=<run_id>/\nParquet snapshot + duplicate flags"
         fillcolor = "#fff3cd"
     ]
 
@@ -123,5 +122,5 @@ digraph invoice_pipeline_dev {
     enrich_llm      -> s3_errors       [label="technical failure document"]
     enrich_llm      -> publish_metrics [label="processing result"]
     publish_metrics -> cloudwatch      [label="PutMetricData\nlogs by stage"]
-    s3_silver       -> s3_gold         [label="future consolidation" style=dashed]
+    s3_silver       -> s3_gold         [label="batch consolidation\nmark cross-run duplicates"]
 }

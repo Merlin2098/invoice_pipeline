@@ -27,9 +27,11 @@ host projects.
 
 The AWS MVP uses a decoupled event flow:
 
-1. A document is uploaded to `s3://<data-lake-bucket>/raw/run_id=<run_id>/<file>`.
+1. A document is uploaded to `s3://<data-lake-bucket>/raw/<file>` or
+   `s3://<data-lake-bucket>/raw/run_id=<run_id>/<file>`.
 2. S3 sends the upload event to the raw ingestion SQS queue.
-3. The `raw-dispatch` Lambda consumes the SQS message and starts Step Functions.
+3. The `raw-dispatch` Lambda consumes the SQS message, generates a `run_id`
+   when the key does not contain one, and starts Step Functions.
 4. Step Functions runs `ValidateInput -> ExtractOCR -> EnrichWithLLM -> PublishRunMetrics`.
 5. The pipeline writes bronze evidence, silver outcomes, technical errors, and
    CloudWatch metrics.
@@ -59,7 +61,7 @@ The maintainable Graphviz source is
 [`docs/resources/architecture.dot`](docs/resources/architecture.dot).
 
 ```text
-S3 raw/run_id=<run_id>/
+S3 raw/ or raw/run_id=<run_id>/
         |
         v
 SQS raw-ingestion ----> SQS DLQ
@@ -137,13 +139,15 @@ should use `infra/envs/dev`.
 
 ## Data Lake Layers
 
-- `raw/`: source documents uploaded by run, using `raw/run_id=<run_id>/<file>`.
+- `raw/`: source documents uploaded directly as `raw/<file>` or by run using
+  `raw/run_id=<run_id>/<file>`.
 - `bronze/textract-json/`: Textract technical evidence and extraction metadata.
 - `silver/valid/`: canonical accepted documents.
 - `silver/rejected/`: canonical documents rejected by quality or business rules.
 - `errors/`: technical processing failures, including failed silver documents.
-- `gold/documents/`: intended curated parquet output; planned but not yet
-  validated in the deployed AWS path.
+- `gold/documents/run_id=<run_id>/`: curated Parquet snapshot for a stable
+  silver run. Gold preserves accepted documents and marks cross-run duplicates
+  with `document_fingerprint`, `business_key`, and duplicate status fields.
 
 ## Current Pipeline Design
 
@@ -154,8 +158,10 @@ contracts keep output status explicit instead of silently promoting bad records.
 
 The currently deployed AWS run validated the control plane through S3, SQS,
 Lambda, Step Functions, bronze writes, failed silver routing, and `run_id`
-traceability. The first end-to-end test is blocked at Textract by an AWS
-account or service subscription requirement, not by Terraform wiring.
+traceability. Gold consolidation is implemented as an explicit Parquet snapshot
+step for stable `silver/valid` output, but a successful deployed extraction run
+is still blocked at Textract by an AWS account or service subscription
+requirement, not by Terraform wiring.
 
 ## Specs & ADRs
 

@@ -387,6 +387,7 @@ def test_gold_pipeline_writes_partitioned_parquet_outputs() -> None:
     metrics = run_gold_pipeline(silver_dir=silver_dir, gold_dir=gold_dir, run_id="run-1")
 
     assert (gold_dir / "documents.parquet").exists()
+    assert (gold_dir / "run_id=run-1" / "documents.parquet").exists()
     assert (gold_dir / "run_date=2026-05-05" / "documents.parquet").exists()
     assert metrics["currency_completion_rate"] == 1.0
 
@@ -419,6 +420,167 @@ def test_gold_mapping_builds_documents_table() -> None:
     assert len(documents) == 1
     assert documents.loc[0, "document_id"] == "invoice"
     assert documents.loc[0, "total_amount"] == 481.58
+    assert documents.loc[0, "duplicate_strategy"] == "none"
+
+
+def test_gold_marks_exact_fingerprint_duplicates_without_excluding() -> None:
+    documents = build_documents_table(
+        [
+            {
+                "run_id": "run-2",
+                "source_s3_key": "raw/invoice-copy.tif",
+                "source_file_name": "invoice-copy.tif",
+                "document_type": "invoice",
+                "document_id": "invoice-copy",
+                "document_date": "2024-05-13",
+                "total_amount": 12.34,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "extraction_engine": "textract_analyze_expense",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "quality_flags": [],
+                "created_at": "2026-05-06T00:00:00Z",
+                "document_fingerprint": "same-sha256",
+            }
+        ],
+        history_records=[
+            {
+                "run_id": "run-1",
+                "source_s3_key": "raw/invoice.tif",
+                "source_file_name": "invoice.tif",
+                "document_type": "invoice",
+                "document_id": "invoice",
+                "document_date": "2024-05-13",
+                "total_amount": 12.34,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "document_fingerprint": "same-sha256",
+            }
+        ],
+    )
+
+    assert len(documents) == 1
+    assert bool(documents.loc[0, "is_duplicate"]) is True
+    assert documents.loc[0, "duplicate_of_document_id"] == "invoice"
+    assert documents.loc[0, "duplicate_strategy"] == "exact_fingerprint"
+    assert documents.loc[0, "duplicate_confidence"] == 1.0
+
+
+def test_gold_marks_business_key_duplicates_without_raw_hash_match() -> None:
+    documents = build_documents_table(
+        [
+            {
+                "run_id": "run-2",
+                "source_s3_key": "raw/acme-copy.tif",
+                "source_file_name": "acme-copy.tif",
+                "document_type": "invoice",
+                "document_id": "acme-copy",
+                "document_date": "2024-05-13",
+                "total_amount": "12.34",
+                "vendor_name": " ACME ",
+                "currency": "usd",
+                "extraction_engine": "textract_analyze_expense",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "quality_flags": [],
+                "created_at": "2026-05-06T00:00:00Z",
+                "document_fingerprint": "new-sha256",
+            }
+        ],
+        history_records=[
+            {
+                "run_id": "run-1",
+                "source_s3_key": "raw/acme.tif",
+                "source_file_name": "acme.tif",
+                "document_type": "invoice",
+                "document_id": "acme",
+                "document_date": "2024-05-13",
+                "total_amount": 12.34,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "document_fingerprint": "old-sha256",
+            }
+        ],
+    )
+
+    assert bool(documents.loc[0, "is_duplicate"]) is True
+    assert documents.loc[0, "duplicate_of_document_id"] == "acme"
+    assert documents.loc[0, "duplicate_strategy"] == "business_key"
+    assert documents.loc[0, "duplicate_confidence"] == 0.85
+
+
+def test_gold_does_not_mark_records_with_incomplete_business_key() -> None:
+    documents = build_documents_table(
+        [
+            {
+                "run_id": "run-1",
+                "source_s3_key": "raw/missing.tif",
+                "source_file_name": "missing.tif",
+                "document_type": "invoice",
+                "document_id": "missing",
+                "document_date": None,
+                "total_amount": 12.34,
+                "vendor_name": "Acme",
+                "currency": "USD",
+                "extraction_engine": "textract_analyze_expense",
+                "processing_status": "accepted",
+                "quality_status": "warning",
+                "quality_flags": ["missing_document_date"],
+                "created_at": "2026-05-06T00:00:00Z",
+            }
+        ]
+    )
+
+    assert bool(documents.loc[0, "is_duplicate"]) is False
+    assert documents.loc[0, "business_key"] is None
+    assert documents.loc[0, "duplicate_strategy"] == "none"
+
+
+def test_gold_excludes_rejected_and_failed_records() -> None:
+    documents = build_documents_table(
+        [
+            {
+                "run_id": "run-1",
+                "document_id": "valid",
+                "source_s3_key": "raw/valid.tif",
+                "source_file_name": "valid.tif",
+                "document_type": "invoice",
+                "processing_status": "accepted",
+                "quality_status": "accepted",
+                "quality_flags": [],
+                "created_at": "2026-05-06T00:00:00Z",
+            },
+            {
+                "run_id": "run-1",
+                "document_id": "rejected",
+                "source_s3_key": "raw/rejected.tif",
+                "source_file_name": "rejected.tif",
+                "document_type": "invoice",
+                "processing_status": "rejected",
+                "quality_status": "rejected",
+                "quality_flags": ["missing_required_fields"],
+                "created_at": "2026-05-06T00:00:00Z",
+            },
+            {
+                "run_id": "run-1",
+                "document_id": "failed",
+                "source_s3_key": "raw/failed.tif",
+                "source_file_name": "failed.tif",
+                "document_type": "unknown",
+                "processing_status": "failed",
+                "quality_status": "rejected",
+                "quality_flags": ["textract_request_failed"],
+                "created_at": "2026-05-06T00:00:00Z",
+            },
+        ]
+    )
+
+    assert list(documents["document_id"]) == ["valid"]
 
 
 def test_configure_logging_writes_to_logs_dir(monkeypatch) -> None:
