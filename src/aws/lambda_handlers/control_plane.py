@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -169,17 +170,49 @@ class S3JsonStore:
         self.client = boto3.client("s3")
 
     def write_json(self, key: str, payload: dict[str, Any]) -> None:
+        self.write_bytes(
+            key,
+            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+            content_type="application/json",
+        )
+
+    def write_bytes(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> None:
         self.client.put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
-            ContentType="application/json",
+            Body=payload,
+            ContentType=content_type,
         )
 
     def read_json(self, key: str) -> dict[str, Any]:
         response = self.client.get_object(Bucket=self.bucket_name, Key=key)
         body = response["Body"].read().decode("utf-8")
         return json.loads(body)
+
+    def key_exists(self, key: str) -> bool:
+        try:
+            self.client.head_object(Bucket=self.bucket_name, Key=key)
+            return True
+        except self.client.exceptions.ClientError as exc:
+            if exc.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+
+    def list_json(self, prefix: str) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            for item in page.get("Contents", []) or []:
+                key = str(item.get("Key") or "")
+                if key.endswith(".json"):
+                    records.append(self.read_json(key))
+        return records
 
 
 class TextractAnalyzeExpenseClient:
@@ -670,3 +703,180 @@ def publish_run_metrics(event: dict[str, Any], _context: Any = None) -> dict[str
         "run_id": event.get("run_id"),
         "execution_id": event.get("execution_id"),
     }
+
+
+def _normalize_expected_document(document: dict[str, Any]) -> dict[str, Any]:
+    source_s3_key = str(document.get("source_s3_key") or "")
+    source_file_name = str(
+        document.get("source_file_name") or Path(source_s3_key).name
+    )
+    run_id = str(document.get("run_id") or "")
+    document_id = str(
+        document.get("document_id") or _document_id(source_file_name, source_s3_key)
+    )
+    if not run_id:
+        raise ValueError("expected_documents entries must include run_id")
+    if not document_id:
+        raise ValueError("expected_documents entries must include document_id or file name")
+    return {
+        "run_id": run_id,
+        "document_id": document_id,
+        "source_s3_key": source_s3_key,
+        "source_file_name": source_file_name,
+    }
+
+
+def _gold_prefixes() -> dict[str, str]:
+    prefixes = _silver_prefixes()
+    prefixes["gold_prefix"] = _env("GOLD_PREFIX", "gold/documents")
+    return prefixes
+
+
+def _terminal_document_keys(
+    *,
+    run_id: str,
+    document_id: str,
+    silver_valid_prefix: str,
+    silver_rejected_prefix: str,
+    errors_prefix: str,
+) -> dict[str, str]:
+    return {
+        "valid": build_storage_key(silver_valid_prefix, run_id, f"{document_id}.json"),
+        "rejected": build_storage_key(
+            silver_rejected_prefix,
+            run_id,
+            f"{document_id}.json",
+        ),
+        "failed": build_storage_key(
+            f"{errors_prefix.strip('/')}/silver_failed",
+            run_id,
+            f"{document_id}.json",
+        ),
+    }
+
+
+def _dataframe_to_parquet_bytes(documents: Any) -> bytes:
+    buffer = BytesIO()
+    documents.to_parquet(buffer, index=False)
+    return buffer.getvalue()
+
+
+def consolidate_gold(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    from src.pipeline.gold_model import build_documents_table
+
+    dry_run = _dry_run_response(event, "consolidate_gold")
+    if dry_run is not None:
+        return dry_run
+
+    batch_id = str(event.get("batch_id") or "").strip()
+    if not batch_id:
+        raise ValueError("Missing required field: batch_id")
+
+    expected_documents_payload = event.get("expected_documents") or []
+    if not isinstance(expected_documents_payload, list) or not expected_documents_payload:
+        raise ValueError("expected_documents must be a non-empty list")
+
+    expected_documents = [
+        _normalize_expected_document(dict(document))
+        for document in expected_documents_payload
+    ]
+    data_lake_bucket = str(event.get("data_lake_bucket") or _env("DATA_LAKE_BUCKET"))
+    prefixes = _gold_prefixes()
+    object_store = S3JsonStore(data_lake_bucket)
+    logger = get_logger("consolidate_gold").bind(batch_id=batch_id)
+
+    terminal: dict[str, list[dict[str, Any]]] = {
+        "valid": [],
+        "rejected": [],
+        "failed": [],
+    }
+    valid_records: list[dict[str, Any]] = []
+    missing_documents: list[dict[str, Any]] = []
+
+    for document in expected_documents:
+        keys = _terminal_document_keys(
+            run_id=document["run_id"],
+            document_id=document["document_id"],
+            **{
+                key: str(prefixes[key])
+                for key in (
+                    "silver_valid_prefix",
+                    "silver_rejected_prefix",
+                    "errors_prefix",
+                )
+            },
+        )
+        terminal_status = None
+        terminal_key = None
+        for status, key in keys.items():
+            if object_store.key_exists(key):
+                terminal_status = status
+                terminal_key = key
+                break
+
+        if terminal_status is None or terminal_key is None:
+            missing_documents.append(document)
+            continue
+
+        terminal[terminal_status].append({**document, "output_s3_key": terminal_key})
+        if terminal_status == "valid":
+            valid_records.append(object_store.read_json(terminal_key))
+
+    if missing_documents:
+        logger.info(
+            {
+                "message": "Gold batch incomplete",
+                "status": "incomplete",
+                "missing_count": len(missing_documents),
+            }
+        )
+        return {
+            "status": "incomplete",
+            "batch_id": batch_id,
+            "expected_count": len(expected_documents),
+            "valid_count": len(terminal["valid"]),
+            "rejected_count": len(terminal["rejected"]),
+            "failed_count": len(terminal["failed"]),
+            "missing_documents": missing_documents,
+        }
+
+    history_records = object_store.list_json(f"{prefixes['silver_valid_prefix'].strip('/')}/")
+    documents = build_documents_table(valid_records, history_records=history_records)
+    duplicate_count = (
+        int(documents["is_duplicate"].fillna(False).sum())
+        if "is_duplicate" in documents
+        else 0
+    )
+    gold_prefix = prefixes["gold_prefix"].strip("/")
+    parquet_key = f"{gold_prefix}/batch_id={batch_id}/documents.parquet"
+    manifest_key = f"{gold_prefix}/batch_id={batch_id}/manifest.json"
+    manifest = {
+        "status": "completed",
+        "batch_id": batch_id,
+        "expected_count": len(expected_documents),
+        "valid_count": len(terminal["valid"]),
+        "rejected_count": len(terminal["rejected"]),
+        "failed_count": len(terminal["failed"]),
+        "gold_row_count": int(len(documents)),
+        "duplicate_count": duplicate_count,
+        "run_ids": sorted({document["run_id"] for document in expected_documents}),
+        "missing_documents": [],
+        "created_at": _utc_now_iso(),
+        "parquet_s3_key": parquet_key,
+        "manifest_s3_key": manifest_key,
+    }
+
+    object_store.write_bytes(
+        parquet_key,
+        _dataframe_to_parquet_bytes(documents),
+        content_type="application/vnd.apache.parquet",
+    )
+    object_store.write_json(manifest_key, manifest)
+    logger.info(
+        {
+            "message": "Gold batch consolidation completed",
+            "status": "completed",
+            "gold_row_count": manifest["gold_row_count"],
+        }
+    )
+    return manifest

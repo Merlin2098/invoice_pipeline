@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -16,6 +18,8 @@ LAMBDA_REQUIREMENTS = REPO_ROOT / "requirements.lambda.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
 VENDORED_MODULES = ("yaml", "dateutil", "six")
+LAMBDA_PLATFORM = "manylinux2014_x86_64"
+LAMBDA_PYTHON_VERSION = "3.11"
 
 
 def detect_package_manager(selected: str) -> str:
@@ -82,8 +86,53 @@ def add_vendor_dependencies(archive: ZipFile) -> None:
             archive.write(origin, origin.name)
 
 
+def add_dependency_tree(archive: ZipFile, dependency_root: Path) -> None:
+    for file_path in sorted(dependency_root.rglob("*")):
+        if file_path.is_dir():
+            continue
+        if "__pycache__" in file_path.parts or file_path.suffix == ".pyc":
+            continue
+        archive.write(file_path, file_path.relative_to(dependency_root))
+
+
+def add_lambda_dependencies(archive: ZipFile, requirements_text: str) -> None:
+    if not requirements_text.strip():
+        add_vendor_dependencies(archive)
+        return
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        requirements_path = temp_path / "requirements.txt"
+        dependency_root = temp_path / "python"
+        requirements_path.write_text(requirements_text, encoding="utf-8")
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--target",
+                str(dependency_root),
+                "--platform",
+                LAMBDA_PLATFORM,
+                "--implementation",
+                "cp",
+                "--python-version",
+                LAMBDA_PYTHON_VERSION,
+                "--only-binary=:all:",
+                "-r",
+                str(requirements_path),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+        add_dependency_tree(archive, dependency_root)
+
+
 def build_bundle(package_manager: str) -> Path:
     ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    requirements_text = runtime_requirements_text(package_manager)
     with ZipFile(ARTIFACT_PATH, "w", compression=ZIP_DEFLATED) as archive:
         for directory in INCLUDE_DIRS:
             for file_path in sorted(directory.rglob("*")):
@@ -95,8 +144,8 @@ def build_bundle(package_manager: str) -> Path:
                     continue
                 if file_path.is_file():
                     archive.write(file_path, file_path.relative_to(REPO_ROOT))
-        add_vendor_dependencies(archive)
-        archive.writestr("requirements.txt", runtime_requirements_text(package_manager))
+        add_lambda_dependencies(archive, requirements_text)
+        archive.writestr("requirements.txt", requirements_text)
     return ARTIFACT_PATH
 
 
@@ -109,6 +158,9 @@ def clean_bundle() -> None:
                 f"Could not remove {ARTIFACT_PATH} because it is currently in use. Close any process using the bundle and retry.",
                 file=sys.stderr,
             )
+    build_dir = ARTIFACT_PATH.parent / "build"
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
 
 
 def main() -> None:

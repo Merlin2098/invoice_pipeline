@@ -105,6 +105,14 @@ module "publish_metrics_log_group" {
   tags              = local.common_tags
 }
 
+module "consolidate_gold_log_group" {
+  source = "../../modules/cloudwatch_log_group"
+
+  name              = "/aws/lambda/${local.name_prefix}-consolidate-gold"
+  retention_in_days = var.lambda_log_retention_in_days
+  tags              = local.common_tags
+}
+
 data "aws_iam_policy_document" "lambda_logging" {
   statement {
     sid = "WriteFunctionLogs"
@@ -120,6 +128,7 @@ data "aws_iam_policy_document" "lambda_logging" {
       "${module.extract_ocr_log_group.arn}:*",
       "${module.enrich_llm_log_group.arn}:*",
       "${module.publish_metrics_log_group.arn}:*",
+      "${module.consolidate_gold_log_group.arn}:*",
     ]
   }
 }
@@ -318,6 +327,43 @@ data "aws_iam_policy_document" "publish_metrics_cloudwatch" {
   }
 }
 
+data "aws_iam_policy_document" "consolidate_gold_data_lake_access" {
+  statement {
+    sid     = "ReadTerminalSilverOutputs"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${module.data_lake_bucket.bucket_arn}/${local.silver_valid_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.silver_rejected_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.errors_prefix}/*",
+    ]
+  }
+
+  statement {
+    sid       = "ListTerminalSilverPrefixes"
+    actions   = ["s3:ListBucket"]
+    resources = [module.data_lake_bucket.bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        local.silver_valid_prefix,
+        "${local.silver_valid_prefix}/*",
+        local.silver_rejected_prefix,
+        "${local.silver_rejected_prefix}/*",
+        local.errors_prefix,
+        "${local.errors_prefix}/*",
+      ]
+    }
+  }
+
+  statement {
+    sid       = "WriteGoldDocuments"
+    actions   = ["s3:PutObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/${local.gold_prefix}/*"]
+  }
+}
+
 data "aws_iam_policy_document" "step_function_lambda_invoke" {
   statement {
     sid     = "InvokePipelineLambdas"
@@ -437,6 +483,18 @@ module "publish_metrics_role" {
   inline_policies = {
     logging          = data.aws_iam_policy_document.lambda_logging.json
     cloudwatch_write = data.aws_iam_policy_document.publish_metrics_cloudwatch.json
+  }
+  tags = local.common_tags
+}
+
+module "consolidate_gold_role" {
+  source = "../../modules/iam_role"
+
+  name             = "${local.name_prefix}-consolidate-gold-role"
+  trusted_services = ["lambda.amazonaws.com"]
+  inline_policies = {
+    logging          = data.aws_iam_policy_document.lambda_logging.json
+    data_lake_access = data.aws_iam_policy_document.consolidate_gold_data_lake_access.json
   }
   tags = local.common_tags
 }
@@ -569,6 +627,30 @@ module "publish_metrics_lambda" {
   log_group_name   = module.publish_metrics_log_group.name
   environment_variables = {
     CLOUDWATCH_NAMESPACE = var.cloudwatch_namespace
+  }
+  tags = local.common_tags
+}
+
+module "consolidate_gold_lambda" {
+  source = "../../modules/lambda_function"
+
+  function_name    = "${local.name_prefix}-consolidate-gold"
+  role_arn         = module.consolidate_gold_role.role_arn
+  s3_bucket        = module.artifact_bucket.bucket_name
+  s3_key           = var.lambda_package_s3_key
+  source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/control_plane_bundle.zip")
+  runtime          = var.lambda_runtime
+  handler          = var.consolidate_gold_handler
+  timeout          = var.lambda_timeout_seconds
+  memory_size      = var.lambda_memory_size
+  log_group_name   = module.consolidate_gold_log_group.name
+  environment_variables = {
+    DATA_LAKE_BUCKET       = module.data_lake_bucket.bucket_name
+    SILVER_VALID_PREFIX    = local.silver_valid_prefix
+    SILVER_REJECTED_PREFIX = local.silver_rejected_prefix
+    ERRORS_PREFIX          = local.errors_prefix
+    GOLD_PREFIX            = local.gold_prefix
+    TRACEABILITY_MODE      = "batch_id_ready"
   }
   tags = local.common_tags
 }

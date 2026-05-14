@@ -9,6 +9,7 @@ from src.aws.glue_jobs.consolidate_gold import (
 )
 from src.aws.glue_jobs.normalize_documents import normalize_bronze_documents
 from src.aws.lambda_handlers.control_plane import (
+    consolidate_gold,
     enrich_with_llm,
     extract_ocr,
     process_document,
@@ -201,6 +202,196 @@ def test_lambda_control_handlers_validate_and_publish_without_boto3(monkeypatch)
 
     assert result["valid"] is True
     assert publish["published"] is False
+
+
+def test_consolidate_gold_returns_incomplete_without_writing(monkeypatch) -> None:
+    writes: dict[str, Any] = {}
+
+    class FakeStore:
+        def key_exists(self, key: str) -> bool:
+            return False
+
+        def write_bytes(
+            self,
+            key: str,
+            payload: bytes,
+            *,
+            content_type: str = "application/octet-stream",
+        ) -> None:
+            writes[key] = payload
+
+        def write_json(self, key: str, payload: dict[str, Any]) -> None:
+            writes[key] = payload
+
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane.S3JsonStore",
+        lambda bucket_name: FakeStore(),
+    )
+    monkeypatch.setenv("DATA_LAKE_BUCKET", "lake-bucket")
+
+    result = consolidate_gold(
+        {
+            "batch_id": "batch-1",
+            "expected_documents": [
+                {
+                    "run_id": "run-1",
+                    "document_id": "missing",
+                    "source_s3_key": "raw/missing.pdf",
+                }
+            ],
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["missing_documents"][0]["document_id"] == "missing"
+    assert writes == {}
+
+
+def test_consolidate_gold_writes_manifest_and_parquet_for_completed_batch(
+    monkeypatch,
+) -> None:
+    objects: dict[str, Any] = {
+        "silver/valid/run_id=run-old/invoice-old.json": {
+            "run_id": "run-old",
+            "document_id": "invoice-old",
+            "source_s3_key": "raw/invoice-old.pdf",
+            "source_file_name": "invoice-old.pdf",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "total_amount": 10.0,
+            "vendor_name": "Acme",
+            "currency": "USD",
+            "processing_status": "accepted",
+            "quality_status": "accepted",
+            "quality_flags": [],
+            "created_at": "2026-05-06T00:00:00Z",
+            "document_fingerprint": "same-sha256",
+        },
+        "silver/valid/run_id=run-1/invoice.json": {
+            "run_id": "run-1",
+            "document_id": "invoice",
+            "source_s3_key": "raw/invoice.pdf",
+            "source_file_name": "invoice.pdf",
+            "document_type": "invoice",
+            "document_date": "2024-01-01",
+            "total_amount": 10.0,
+            "vendor_name": "Acme",
+            "currency": "USD",
+            "processing_status": "accepted",
+            "quality_status": "accepted",
+            "quality_flags": [],
+            "created_at": "2026-05-06T00:00:00Z",
+            "document_fingerprint": "same-sha256",
+        },
+        "silver/rejected/run_id=run-2/rejected.json": {},
+        "errors/silver_failed/run_id=run-3/failed.json": {},
+    }
+    writes: dict[str, Any] = {}
+
+    class FakeStore:
+        def key_exists(self, key: str) -> bool:
+            return key in objects
+
+        def read_json(self, key: str) -> dict[str, Any]:
+            return objects[key]
+
+        def list_json(self, prefix: str) -> list[dict[str, Any]]:
+            return [
+                payload
+                for key, payload in objects.items()
+                if key.startswith(prefix) and key.endswith(".json")
+            ]
+
+        def write_bytes(
+            self,
+            key: str,
+            payload: bytes,
+            *,
+            content_type: str = "application/octet-stream",
+        ) -> None:
+            writes[key] = payload
+
+        def write_json(self, key: str, payload: dict[str, Any]) -> None:
+            writes[key] = payload
+
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane.S3JsonStore",
+        lambda bucket_name: FakeStore(),
+    )
+    monkeypatch.setenv("DATA_LAKE_BUCKET", "lake-bucket")
+    monkeypatch.setenv("GOLD_PREFIX", "gold/documents")
+
+    result = consolidate_gold(
+        {
+            "batch_id": "batch-1",
+            "expected_documents": [
+                {"run_id": "run-1", "document_id": "invoice"},
+                {"run_id": "run-2", "document_id": "rejected"},
+                {"run_id": "run-3", "document_id": "failed"},
+            ],
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert result["valid_count"] == 1
+    assert result["rejected_count"] == 1
+    assert result["failed_count"] == 1
+    assert result["gold_row_count"] == 1
+    assert result["duplicate_count"] == 1
+    assert "gold/documents/batch_id=batch-1/documents.parquet" in writes
+    assert writes["gold/documents/batch_id=batch-1/manifest.json"]["gold_row_count"] == 1
+
+
+def test_consolidate_gold_writes_empty_parquet_when_batch_has_no_valid_documents(
+    monkeypatch,
+) -> None:
+    objects: dict[str, Any] = {
+        "silver/rejected/run_id=run-1/rejected.json": {},
+        "errors/silver_failed/run_id=run-2/failed.json": {},
+    }
+    writes: dict[str, Any] = {}
+
+    class FakeStore:
+        def key_exists(self, key: str) -> bool:
+            return key in objects
+
+        def read_json(self, key: str) -> dict[str, Any]:
+            return objects[key]
+
+        def list_json(self, prefix: str) -> list[dict[str, Any]]:
+            return []
+
+        def write_bytes(
+            self,
+            key: str,
+            payload: bytes,
+            *,
+            content_type: str = "application/octet-stream",
+        ) -> None:
+            writes[key] = payload
+
+        def write_json(self, key: str, payload: dict[str, Any]) -> None:
+            writes[key] = payload
+
+    monkeypatch.setattr(
+        "src.aws.lambda_handlers.control_plane.S3JsonStore",
+        lambda bucket_name: FakeStore(),
+    )
+    monkeypatch.setenv("DATA_LAKE_BUCKET", "lake-bucket")
+
+    result = consolidate_gold(
+        {
+            "batch_id": "batch-empty",
+            "expected_documents": [
+                {"run_id": "run-1", "document_id": "rejected"},
+                {"run_id": "run-2", "document_id": "failed"},
+            ],
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert result["gold_row_count"] == 0
+    assert "gold/documents/batch_id=batch-empty/documents.parquet" in writes
 
 
 def test_start_raw_ingestion_starts_step_function_from_s3_event(monkeypatch) -> None:

@@ -1,2 +1,4 @@
 PyYAML
+pandas
+pyarrow
 python-dateutil

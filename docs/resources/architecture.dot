@@ -69,6 +69,11 @@ digraph invoice_pipeline_dev {
         fillcolor = "#d1e7dd"
     ]
 
+    consolidate_gold [
+        label     = "Lambda\nconsolidate-gold\npost-batch finalizer\nwrites Parquet + manifest"
+        fillcolor = "#d1e7dd"
+    ]
+
     textract [
         label     = "Amazon Textract\nAnalyzeExpense"
         shape     = ellipse
@@ -103,7 +108,7 @@ digraph invoice_pipeline_dev {
     ]
 
     s3_gold [
-        label     = "S3 data lake\ngold/documents/run_id=<run_id>/\nParquet snapshot + duplicate flags"
+        label     = "S3 data lake\ngold/documents/batch_id=<batch_id>/\nParquet snapshot + manifest + duplicate flags"
         fillcolor = "#fff3cd"
     ]
 
@@ -122,5 +127,8 @@ digraph invoice_pipeline_dev {
     enrich_llm      -> s3_errors       [label="technical failure document"]
     enrich_llm      -> publish_metrics [label="processing result"]
     publish_metrics -> cloudwatch      [label="PutMetricData\nlogs by stage"]
-    s3_silver       -> s3_gold         [label="batch consolidation\nmark cross-run duplicates"]
+    s3_silver       -> consolidate_gold [label="valid/rejected terminal outputs"]
+    s3_errors       -> consolidate_gold [label="failed terminal outputs"]
+    consolidate_gold -> s3_gold        [label="only when batch complete\nvalid rows only"]
+    consolidate_gold -> cloudwatch     [label="logs"]
 }

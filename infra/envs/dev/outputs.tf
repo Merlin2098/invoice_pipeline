@@ -40,7 +40,7 @@ output "silver_rejected_path_template" {
 
 output "gold_path_template" {
   description = "Expected gold S3 layout."
-  value       = "s3://${module.data_lake_bucket.bucket_name}/${local.gold_prefix}/run_date=YYYY-MM-DD/documents.parquet"
+  value       = "s3://${module.data_lake_bucket.bucket_name}/${local.gold_prefix}/batch_id=<batch_id>/documents.parquet"
 }
 
 output "errors_path_template" {
@@ -81,6 +81,16 @@ output "enrich_llm_lambda_name" {
 output "publish_metrics_lambda_name" {
   description = "Lambda function name used by Step Functions to publish CloudWatch metrics."
   value       = module.publish_metrics_lambda.lambda_name
+}
+
+output "consolidate_gold_lambda_name" {
+  description = "Lambda function name used by the post-batch smoke finalizer."
+  value       = module.consolidate_gold_lambda.lambda_name
+}
+
+output "consolidate_gold_lambda_arn" {
+  description = "Lambda function ARN used by the post-batch smoke finalizer."
+  value       = module.consolidate_gold_lambda.lambda_arn
 }
 
 output "state_machine_name" {

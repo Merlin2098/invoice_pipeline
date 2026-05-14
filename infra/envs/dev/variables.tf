@@ -108,6 +108,12 @@ variable "publish_metrics_handler" {
   default     = "src.aws.lambda_handlers.control_plane.publish_run_metrics"
 }
 
+variable "consolidate_gold_handler" {
+  description = "Handler for the post-batch Gold consolidation Lambda."
+  type        = string
+  default     = "src.aws.lambda_handlers.control_plane.consolidate_gold"
+}
+
 variable "lambda_timeout_seconds" {
   description = "Timeout for the control-plane Lambdas."
   type        = number
