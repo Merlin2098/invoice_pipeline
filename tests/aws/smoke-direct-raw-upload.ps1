@@ -52,7 +52,7 @@ function Invoke-AwsRaw {
 
 function Get-TerraformOutputs {
     $resolvedTerraformDir = Resolve-RepoPath $TerraformDir
-    $output = terraform -chdir=$resolvedTerraformDir output -json 2>&1
+    $output = terraform "-chdir=$resolvedTerraformDir" output -json 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw "terraform output failed in ${resolvedTerraformDir}: $($output -join [Environment]::NewLine)"
     }
