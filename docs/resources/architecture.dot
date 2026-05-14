@@ -70,7 +70,7 @@ digraph invoice_pipeline_dev {
     ]
 
     consolidate_gold [
-        label     = "Lambda\nconsolidate-gold\npost-batch finalizer\nwrites Parquet + manifest"
+        label     = "Lambda\nconsolidate-gold\npost-batch finalizer\nwrites Parquet + external manifest"
         fillcolor = "#d1e7dd"
     ]
 
@@ -108,8 +108,41 @@ digraph invoice_pipeline_dev {
     ]
 
     s3_gold [
-        label     = "S3 data lake\ngold/documents/batch_id=<batch_id>/\nParquet snapshot + manifest + duplicate flags"
+        label     = "S3 data lake\ngold/documents/batch_id=<batch_id>/\nParquet snapshot + duplicate flags"
         fillcolor = "#fff3cd"
+    ]
+
+    s3_gold_manifests [
+        label     = "S3 data lake\ngold/manifests/batch_id=<batch_id>/\nmanifest JSON outside Athena table path"
+        fillcolor = "#fff3cd"
+    ]
+
+    s3_athena_results [
+        label     = "S3 data lake\nathena-results/\nquery output location"
+        fillcolor = "#fff3cd"
+    ]
+
+    glue_catalog [
+        label     = "AWS Glue Data Catalog\ndatabase: invoice_pipeline_gold\ntable: gold_documents\npartitioned by batch_id"
+        shape     = cylinder
+        fillcolor = "#fde8d8"
+    ]
+
+    athena_workgroup [
+        label     = "Amazon Athena\nworkgroup: invoice-pipeline-dev\nscan limit 100 MB/query"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    bedrock_sql [
+        label     = "Amazon Bedrock\nNL question -> Athena SQL\n(Converse API)"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    analytics_cli [
+        label     = "src/analytics CLI\nrepair-partitions | sql | ask\nSQL validator (SELECT-only)"
+        fillcolor = "#d1e7dd"
     ]
 
     s3_raw          -> sqs_raw         [label="s3:ObjectCreated:*\nfilter: raw/ prefix"]
@@ -130,5 +163,15 @@ digraph invoice_pipeline_dev {
     s3_silver       -> consolidate_gold [label="valid/rejected terminal outputs"]
     s3_errors       -> consolidate_gold [label="failed terminal outputs"]
     consolidate_gold -> s3_gold        [label="only when batch complete\nvalid rows only"]
+    consolidate_gold -> s3_gold_manifests [label="batch manifest\nkept out of Parquet partitions"]
     consolidate_gold -> cloudwatch     [label="logs"]
+
+    s3_gold          -> glue_catalog     [label="MSCK REPAIR TABLE\nregisters batch_id partitions"]
+    analytics_cli    -> bedrock_sql      [label="ask <question>\nschema + system prompt"]
+    bedrock_sql      -> analytics_cli    [label="generated SQL"]
+    analytics_cli    -> athena_workgroup [label="StartQueryExecution\nvalidated SELECT + LIMIT"]
+    athena_workgroup -> glue_catalog     [label="reads table metadata"]
+    athena_workgroup -> s3_gold          [label="scans Parquet partitions"]
+    athena_workgroup -> s3_athena_results [label="writes query results"]
+    athena_workgroup -> cloudwatch       [label="workgroup metrics"]
 }

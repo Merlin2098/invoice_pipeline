@@ -17,6 +17,7 @@ locals {
   silver_valid_prefix    = trim(var.silver_valid_prefix, "/")
   silver_rejected_prefix = trim(var.silver_rejected_prefix, "/")
   gold_prefix            = trim(var.gold_prefix, "/")
+  gold_manifest_prefix   = "gold/manifests"
   errors_prefix          = trim(var.errors_prefix, "/")
 
   common_tags = merge(
@@ -36,6 +37,7 @@ locals {
     "${local.silver_valid_prefix}/",
     "${local.silver_rejected_prefix}/",
     "${local.gold_prefix}/",
+    "${local.gold_manifest_prefix}/",
     "${local.errors_prefix}/",
     "athena-results/",
   ]
@@ -359,9 +361,12 @@ data "aws_iam_policy_document" "consolidate_gold_data_lake_access" {
   }
 
   statement {
-    sid       = "WriteGoldDocuments"
-    actions   = ["s3:PutObject"]
-    resources = ["${module.data_lake_bucket.bucket_arn}/${local.gold_prefix}/*"]
+    sid     = "WriteGoldOutputs"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${module.data_lake_bucket.bucket_arn}/${local.gold_prefix}/*",
+      "${module.data_lake_bucket.bucket_arn}/${local.gold_manifest_prefix}/*",
+    ]
   }
 }
 
@@ -651,6 +656,7 @@ module "consolidate_gold_lambda" {
     SILVER_REJECTED_PREFIX = local.silver_rejected_prefix
     ERRORS_PREFIX          = local.errors_prefix
     GOLD_PREFIX            = local.gold_prefix
+    GOLD_MANIFEST_PREFIX   = local.gold_manifest_prefix
     TRACEABILITY_MODE      = "batch_id_ready"
   }
   tags = local.common_tags

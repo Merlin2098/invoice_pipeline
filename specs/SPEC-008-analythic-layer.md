@@ -30,7 +30,7 @@ completed batch snapshot:
 
 ```text
 s3://<data-lake-bucket>/gold/documents/batch_id=<batch_id>/documents.parquet
-s3://<data-lake-bucket>/gold/documents/batch_id=<batch_id>/manifest.json
+s3://<data-lake-bucket>/gold/manifests/batch_id=<batch_id>/manifest.json
 ```
 
 The existing canonical Gold dataset is `gold_documents`, backed by
@@ -174,11 +174,16 @@ This spec does NOT include:
 
 ```text
 S3 Gold Layer
-`-- gold/documents/
+|-- gold/documents/
+|   `-- batch_id=<batch_id>/
+|       `-- documents.parquet
+`-- gold/manifests/
     `-- batch_id=<batch_id>/
-        |-- documents.parquet
         `-- manifest.json
 ```
+
+Manifests MUST remain outside `gold/documents/` because Athena reads every file
+inside a registered partition location as Parquet.
 
 ## Metadata Layer
 

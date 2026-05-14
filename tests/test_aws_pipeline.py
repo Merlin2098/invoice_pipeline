@@ -355,8 +355,9 @@ def test_consolidate_gold_writes_manifest_and_parquet_for_completed_batch(
     assert result["date_completion_rate"] == 1.0
     assert result["amount_completion_rate"] == 0.0
     assert "gold/documents/batch_id=batch-1/documents.parquet" in writes
-    assert writes["gold/documents/batch_id=batch-1/manifest.json"]["gold_row_count"] == 1
-    assert writes["gold/documents/batch_id=batch-1/manifest.json"]["missing_amount_count"] == 1
+    assert "gold/documents/batch_id=batch-1/manifest.json" not in writes
+    assert writes["gold/manifests/batch_id=batch-1/manifest.json"]["gold_row_count"] == 1
+    assert writes["gold/manifests/batch_id=batch-1/manifest.json"]["missing_amount_count"] == 1
 
 
 def test_consolidate_gold_writes_empty_parquet_when_batch_has_no_valid_documents(

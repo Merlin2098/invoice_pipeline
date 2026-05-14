@@ -729,6 +729,7 @@ def _normalize_expected_document(document: dict[str, Any]) -> dict[str, Any]:
 def _gold_prefixes() -> dict[str, str]:
     prefixes = _silver_prefixes()
     prefixes["gold_prefix"] = _env("GOLD_PREFIX", "gold/documents")
+    prefixes["gold_manifest_prefix"] = _env("GOLD_MANIFEST_PREFIX", "gold/manifests")
     return prefixes
 
 
@@ -864,8 +865,9 @@ def consolidate_gold(event: dict[str, Any], _context: Any = None) -> dict[str, A
         else 0
     )
     gold_prefix = prefixes["gold_prefix"].strip("/")
+    gold_manifest_prefix = prefixes["gold_manifest_prefix"].strip("/")
     parquet_key = f"{gold_prefix}/batch_id={batch_id}/documents.parquet"
-    manifest_key = f"{gold_prefix}/batch_id={batch_id}/manifest.json"
+    manifest_key = f"{gold_manifest_prefix}/batch_id={batch_id}/manifest.json"
     manifest = {
         "status": "completed",
         "batch_id": batch_id,

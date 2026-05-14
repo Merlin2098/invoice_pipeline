@@ -60,6 +60,23 @@ terraform -chdir=infra/envs/dev validate
 terraform -chdir=infra/envs/dev plan -var-file="terraform.tfvars" -out="tfplan"
 ```
 
+If PowerShell or the local Terraform binary returns:
+
+```text
+Error: Too many command line arguments
+To specify a working directory for the plan, use the global -chdir flag.
+```
+
+run the command from the environment directory instead of using `-chdir`:
+
+```powershell
+Push-Location .\infra\envs\dev
+terraform plan -var-file="terraform.tfvars" -out="tfplan"
+Pop-Location
+```
+
+Keep `-out="tfplan"` as a single argument in PowerShell.
+
 Review the saved plan in human-readable form:
 
 ```powershell
@@ -72,6 +89,14 @@ Apply only the saved plan you reviewed:
 
 ```powershell
 terraform -chdir=infra/envs/dev apply "tfplan"
+```
+
+If you created the plan with `Push-Location`, apply it the same way:
+
+```powershell
+Push-Location .\infra\envs\dev
+terraform apply "tfplan"
+Pop-Location
 ```
 
 This creates or changes real AWS resources.

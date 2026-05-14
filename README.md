@@ -10,7 +10,8 @@ cloud MVP lives under [`infra/envs/dev`](infra/envs/dev/README.md).
 The current AWS MVP is intentionally small and explicit: S3 receives raw
 documents, SQS buffers upload events, Lambda starts and runs processing stages,
 Step Functions coordinates the document workflow, and CloudWatch captures logs
-and metrics.
+and metrics. A Gold analytics layer exposes the Parquet snapshots through Glue
+and Athena, with an optional Bedrock-powered natural-language SQL path.
 
 ## Business Problem
 
@@ -49,6 +50,9 @@ the cloud target is the current architecture of record.
   metrics publishing.
 - Textract `AnalyzeExpense` integration for invoice extraction.
 - Bedrock permissioning and optional runtime normalization path.
+- Gold analytics layer: Glue Data Catalog table over `gold/documents/`, Athena
+  workgroup with per-query scan limits, and a Bedrock-assisted natural-language
+  SQL generator gated by a SELECT-only validator.
 - Canonical contracts and quality rules under `specs/`.
 - `uv`-based local workflow with Makefile targets for setup, linting, tests,
   packaging, and AI context refresh.
@@ -88,6 +92,19 @@ S3 silver/valid/ | silver/rejected/ | errors/
         |
         v
 PublishRunMetrics ----> CloudWatch Logs + Metrics
+        |
+        v
+consolidate-gold ----> S3 gold/documents/batch_id=<batch_id>/
+                   \-> S3 gold/manifests/batch_id=<batch_id>/
+                                    |
+                                    v
+                       Glue Catalog (invoice_pipeline_gold.gold_documents)
+                                    |
+                                    v
+                       Athena workgroup <----- src/analytics CLI
+                                    ^                |
+                                    |                v
+                                    +------- Bedrock NL -> SQL
 ```
 
 ## Processing Flow
@@ -114,7 +131,10 @@ metrics for that outcome.
 - AWS Lambda for dispatch, validation, extraction, enrichment, and metrics.
 - AWS Step Functions for workflow orchestration.
 - Amazon Textract for invoice-focused OCR and expense extraction.
-- Amazon Bedrock for optional LLM-assisted normalization.
+- Amazon Bedrock for optional LLM-assisted normalization and natural-language
+  to Athena SQL generation.
+- AWS Glue Data Catalog for Gold table metadata.
+- Amazon Athena for SQL queries over Gold Parquet snapshots.
 - Amazon CloudWatch for logs and custom metrics.
 - AWS IAM for scoped runtime permissions.
 - AWS Budgets for dev cost tracking.
@@ -130,6 +150,7 @@ infra/modules/      Focused reusable Terraform modules
 scripts/windows/    Windows setup and Makefile wrapper helpers
 specs/              Contracts, quality rules, metrics, and design specs
 src/                Python pipeline and AWS runtime code
+src/analytics/      Athena client, SQL validator, and Bedrock SQL generator
 tests/              Unit tests, AWS smoke helpers, and reference fixtures
 ```
 
@@ -144,10 +165,48 @@ should use `infra/envs/dev`.
 - `silver/valid/`: canonical accepted documents.
 - `silver/rejected/`: canonical documents rejected by quality or business rules.
 - `errors/`: technical processing failures, including failed silver documents.
-- `gold/documents/batch_id=<batch_id>/`: curated Parquet snapshot plus manifest
-  for a completed batch. Gold preserves accepted documents and marks cross-run
+- `gold/documents/batch_id=<batch_id>/`: curated Parquet snapshot for a
+  completed batch. Gold preserves accepted documents and marks cross-run
   duplicates with `document_fingerprint`, `business_key`, and duplicate status
   fields.
+- `gold/manifests/batch_id=<batch_id>/`: batch manifest JSON kept outside the
+  Athena table prefix so `gold_documents` partitions contain only Parquet files.
+
+## Gold Analytics Layer
+
+Once a batch lands under `gold/documents/batch_id=<batch_id>/`, it is queryable
+through Athena via a Glue catalog table. The layer is provisioned in
+[`infra/envs/dev/analytics.tf`](infra/envs/dev/analytics.tf) and includes:
+
+- A Glue database `invoice_pipeline_gold` with the `gold_documents` external
+  table partitioned by `batch_id`.
+- An Athena workgroup `invoice-pipeline-dev` that enforces a 100 MB per-query
+  scan cutoff and writes results to `s3://<data-lake-bucket>/athena-results/`.
+- A Python package [`src/analytics/`](src/analytics/) that exposes a small CLI
+  with three subcommands: `repair-partitions`, `sql`, and `ask`.
+
+The `ask` command sends a user question to Amazon Bedrock together with the
+table schema and the system prompt at
+[`specs/prompts/bedrock_analytics_sql_prompt.md`](specs/prompts/bedrock_analytics_sql_prompt.md).
+The generated SQL is run through a strict validator
+([`src/analytics/sql_validator.py`](src/analytics/sql_validator.py)) that:
+
+- accepts only single `SELECT` statements,
+- rejects DDL, DML, and `SELECT *`,
+- limits queries to known tables and columns from the schema registry, and
+- enforces a default `LIMIT 100` (max `1000`).
+
+Example usage after deployment:
+
+```powershell
+$lake = terraform -chdir=infra/envs/dev output -raw data_lake_bucket_name
+$env:ATHENA_OUTPUT_LOCATION = "s3://$lake/athena-results/"
+$env:BEDROCK_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
+
+python -m src.analytics.cli repair-partitions
+python -m src.analytics.cli sql "SELECT vendor_name, COUNT(document_id) AS docs FROM gold_documents GROUP BY vendor_name"
+python -m src.analytics.cli ask "How many accepted invoices per vendor in the latest batch?"
+```
 
 ## Current Pipeline Design
 
@@ -171,6 +230,8 @@ Specs and decision records live in [`specs/`](specs/). Key references include:
 - [`SPEC-005-structured-logging.md`](specs/SPEC-005-structured-logging.md)
 - [`SPEC-006-ocr-llm-separation.md`](specs/SPEC-006-ocr-llm-separation.md)
 - [`SPEC-007-terraform-remote-state.md`](specs/SPEC-007-terraform-remote-state.md)
+- [`SPEC-008-analythic-layer.md`](specs/SPEC-008-analythic-layer.md) for the
+  Athena + Bedrock Gold analytics layer.
 - [`specs/contracts/`](specs/contracts/) for canonical document schemas.
 - [`specs/quality/`](specs/quality/) for bronze, silver, and gold rules.
 - [`specs/metrics/pipeline_metrics.yaml`](specs/metrics/pipeline_metrics.yaml)
@@ -289,6 +350,8 @@ and automated gold generation remain unvalidated in the deployed AWS path.
 - Confirm successful outputs under `silver/valid/` or `silver/rejected/`.
 - Activate Bedrock normalization only after Textract succeeds.
 - Add automated gold consolidation after silver output is stable.
+- Validate the Athena + Bedrock analytics path against a live Gold batch and
+  publish reference queries.
 - Harden alarms, retries, selective reprocessing, and cost monitoring.
 
 ## Lessons Learned

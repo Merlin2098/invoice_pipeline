@@ -217,6 +217,7 @@ if ($goldResult.status -eq "incomplete") {
 }
 
 Invoke-AwsRaw @("s3", "sync", "s3://$bucket/gold/documents/batch_id=$batchId/", (Join-Path $s3Dir "gold"))
+Invoke-AwsRaw @("s3", "sync", "s3://$bucket/gold/manifests/batch_id=$batchId/", (Join-Path $s3Dir "gold"))
 foreach ($execution in $executions) {
     Invoke-AwsRaw @("s3", "sync", "s3://$bucket/bronze/textract-json/run_id=$($execution.run_id)/", (Join-Path $s3Dir "bronze\run_id=$($execution.run_id)"))
     Invoke-AwsRaw @("s3", "sync", "s3://$bucket/silver/valid/run_id=$($execution.run_id)/", (Join-Path $s3Dir "silver_valid\run_id=$($execution.run_id)"))

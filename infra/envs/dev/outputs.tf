@@ -43,6 +43,11 @@ output "gold_path_template" {
   value       = "s3://${module.data_lake_bucket.bucket_name}/${local.gold_prefix}/batch_id=<batch_id>/documents.parquet"
 }
 
+output "gold_manifest_path_template" {
+  description = "Expected gold manifest S3 layout outside the Athena table prefix."
+  value       = "s3://${module.data_lake_bucket.bucket_name}/${local.gold_manifest_prefix}/batch_id=<batch_id>/manifest.json"
+}
+
 output "athena_results_path" {
   description = "S3 prefix used for Athena query results."
   value       = "s3://${module.data_lake_bucket.bucket_name}/${local.athena_results_prefix}/"
