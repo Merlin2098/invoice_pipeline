@@ -75,6 +75,15 @@ function Get-DocumentId {
     return [System.IO.Path]::GetFileNameWithoutExtension($FileName)
 }
 
+function Write-Utf8NoBom {
+    param(
+        [string]$Path,
+        [string]$Value
+    )
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
 $startedAt = Get-Date
 $batchId = "direct-raw-smoke-{0}" -f $startedAt.ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $logRoot = Join-Path "logs" $batchId
@@ -181,7 +190,7 @@ $goldPayload = [ordered]@{
     run_ids            = @($executions | ForEach-Object { $_.run_id } | Sort-Object -Unique)
     data_lake_bucket   = $bucket
 }
-$goldPayload | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $goldPayloadPath
+Write-Utf8NoBom -Path $goldPayloadPath -Value ($goldPayload | ConvertTo-Json -Depth 8)
 
 $goldResult = $null
 for ($attempt = 1; $attempt -le $GoldRetries; $attempt++) {
