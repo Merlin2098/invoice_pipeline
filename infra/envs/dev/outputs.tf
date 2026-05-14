@@ -43,6 +43,26 @@ output "gold_path_template" {
   value       = "s3://${module.data_lake_bucket.bucket_name}/${local.gold_prefix}/batch_id=<batch_id>/documents.parquet"
 }
 
+output "athena_results_path" {
+  description = "S3 prefix used for Athena query results."
+  value       = "s3://${module.data_lake_bucket.bucket_name}/${local.athena_results_prefix}/"
+}
+
+output "athena_workgroup_name" {
+  description = "Athena workgroup used for Gold analytics queries."
+  value       = aws_athena_workgroup.analytics.name
+}
+
+output "glue_gold_database_name" {
+  description = "Glue database that catalogs Gold analytics datasets."
+  value       = aws_glue_catalog_database.gold.name
+}
+
+output "glue_gold_documents_table_name" {
+  description = "Glue table name for the Gold documents dataset."
+  value       = aws_glue_catalog_table.gold_documents.name
+}
+
 output "errors_path_template" {
   description = "Expected technical errors S3 layout."
   value       = "s3://${module.data_lake_bucket.bucket_name}/${local.errors_prefix}/"

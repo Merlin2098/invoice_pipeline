@@ -37,6 +37,7 @@ locals {
     "${local.silver_rejected_prefix}/",
     "${local.gold_prefix}/",
     "${local.errors_prefix}/",
+    "athena-results/",
   ]
 }
 
