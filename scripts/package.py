@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,8 @@ LAMBDA_REQUIREMENTS = REPO_ROOT / "requirements.lambda.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
 VENDORED_MODULES = ("yaml", "dateutil", "six")
-LAMBDA_PLATFORM = "manylinux2014_x86_64"
+LAMBDA_PIP_PLATFORM = "manylinux2014_x86_64"
+LAMBDA_UV_PLATFORM = "x86_64-manylinux2014"
 LAMBDA_PYTHON_VERSION = "3.11"
 
 
@@ -95,7 +97,38 @@ def add_dependency_tree(archive: ZipFile, dependency_root: Path) -> None:
         archive.write(file_path, file_path.relative_to(dependency_root))
 
 
-def add_lambda_dependencies(archive: ZipFile, requirements_text: str) -> None:
+def _run_dependency_install(
+    command: list[str],
+    env_overrides: dict[str, str] | None = None,
+) -> None:
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            command,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+
+
+def add_lambda_dependencies(
+    archive: ZipFile,
+    requirements_text: str,
+    package_manager: str,
+) -> None:
     if not requirements_text.strip():
         add_vendor_dependencies(archive)
         return
@@ -105,8 +138,30 @@ def add_lambda_dependencies(archive: ZipFile, requirements_text: str) -> None:
         requirements_path = temp_path / "requirements.txt"
         dependency_root = temp_path / "python"
         requirements_path.write_text(requirements_text, encoding="utf-8")
-        subprocess.run(
-            [
+        if package_manager == "uv":
+            uv_executable = shutil.which("uv")
+            if uv_executable is None:
+                raise RuntimeError("uv is required to package Lambda dependencies")
+            uv_cache_dir = temp_path / "uv-cache"
+            command = [
+                uv_executable,
+                "--system-certs",
+                "pip",
+                "install",
+                "--upgrade",
+                "--target",
+                str(dependency_root),
+                "--python-platform",
+                LAMBDA_UV_PLATFORM,
+                "--python-version",
+                LAMBDA_PYTHON_VERSION,
+                "--only-binary=:all:",
+                "-r",
+                str(requirements_path),
+            ]
+            env_overrides = {"UV_CACHE_DIR": str(uv_cache_dir)}
+        else:
+            command = [
                 sys.executable,
                 "-m",
                 "pip",
@@ -115,7 +170,7 @@ def add_lambda_dependencies(archive: ZipFile, requirements_text: str) -> None:
                 "--target",
                 str(dependency_root),
                 "--platform",
-                LAMBDA_PLATFORM,
+                LAMBDA_PIP_PLATFORM,
                 "--implementation",
                 "cp",
                 "--python-version",
@@ -123,10 +178,9 @@ def add_lambda_dependencies(archive: ZipFile, requirements_text: str) -> None:
                 "--only-binary=:all:",
                 "-r",
                 str(requirements_path),
-            ],
-            cwd=REPO_ROOT,
-            check=True,
-        )
+            ]
+            env_overrides = None
+        _run_dependency_install(command, env_overrides=env_overrides)
         add_dependency_tree(archive, dependency_root)
 
 
@@ -144,7 +198,7 @@ def build_bundle(package_manager: str) -> Path:
                     continue
                 if file_path.is_file():
                     archive.write(file_path, file_path.relative_to(REPO_ROOT))
-        add_lambda_dependencies(archive, requirements_text)
+        add_lambda_dependencies(archive, requirements_text, package_manager)
         archive.writestr("requirements.txt", requirements_text)
     return ARTIFACT_PATH
 
