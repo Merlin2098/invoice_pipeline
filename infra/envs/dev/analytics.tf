@@ -164,10 +164,11 @@ resource "aws_glue_catalog_table" "gold_documents" {
 }
 
 resource "aws_athena_workgroup" "analytics" {
-  name        = local.athena_workgroup_name
-  description = "Athena workgroup for invoice pipeline Gold analytics."
-  state       = "ENABLED"
-  tags        = local.common_tags
+  name          = local.athena_workgroup_name
+  description   = "Athena workgroup for invoice pipeline Gold analytics."
+  state         = "ENABLED"
+  force_destroy = true
+  tags          = local.common_tags
 
   configuration {
     bytes_scanned_cutoff_per_query     = local.athena_scan_limit_bytes
