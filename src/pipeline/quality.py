@@ -73,6 +73,8 @@ def canonical_document_template() -> dict[str, Any]:
         "extraction_engine": None,
         "normalization_engine": None,
         "llm_model_id": None,
+        "bedrock_invoked": False,
+        "bedrock_completed_fields": [],
         "processing_status": "normalized",
         "quality_status": "accepted",
         "quality_score": 1.0,
@@ -177,6 +179,8 @@ def apply_quality_rules(
             rejected = True
             rejection_reason = date_rules.get("on_invalid_date", {}).get("reason", "document_date_out_of_allowed_range")
             add_flag(document, date_rules.get("on_invalid_date", {}).get("flag", "invalid_document_date"))
+    elif date_rules.get("allow_null", True):
+        add_flag(document, "missing_document_date")
 
     amount_rules = rules.get("amount_rules", {})
     total_amount = document.get("total_amount")
@@ -189,6 +193,8 @@ def apply_quality_rules(
             rejected = True
             rejection_reason = amount_rules.get("on_extreme_amount", {}).get("reason", "total_amount_exceeds_allowed_threshold")
             add_flag(document, amount_rules.get("on_extreme_amount", {}).get("flag", "amount_outlier"))
+    elif amount_rules.get("allow_null", True):
+        add_flag(document, "missing_total_amount")
 
     currency_rules = rules.get("currency_rules", {})
     currency = document.get("currency")
@@ -319,6 +325,8 @@ def build_aws_silver_document(
             "extraction_engine": extraction_engine,
             "normalization_engine": normalization_engine,
             "llm_model_id": llm_model_id,
+            "bedrock_invoked": bool(candidate.get("bedrock_invoked", False)),
+            "bedrock_completed_fields": list(candidate.get("bedrock_completed_fields") or []),
             "created_at": created_at,
             "quality_flags": list(candidate.get("quality_flags") or []),
         }

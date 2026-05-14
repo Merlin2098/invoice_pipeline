@@ -93,6 +93,12 @@ def test_aws_runner_uses_bedrock_when_candidate_is_ambiguous() -> None:
     assert any(key.endswith("sample.json") for key in writes)
     assert result["vendor_name"] == "Acme"
     assert result["normalization_engine"] == "bedrock"
+    assert result["bedrock_invoked"] is True
+    assert set(result["bedrock_completed_fields"]) == {
+        "currency",
+        "document_date",
+        "vendor_name",
+    }
 
 
 def test_aws_runner_splits_ocr_and_enrichment() -> None:
@@ -150,6 +156,12 @@ def test_aws_runner_splits_ocr_and_enrichment() -> None:
     assert writes["bronze/textract-json/run_id=run-1/sample.json"]["status"] == "success"
     assert silver["vendor_name"] == "Acme"
     assert silver["normalization_engine"] == "bedrock"
+    assert silver["bedrock_invoked"] is True
+    assert set(silver["bedrock_completed_fields"]) == {
+        "currency",
+        "document_date",
+        "vendor_name",
+    }
 
 
 def test_glue_normalization_and_gold_preview_use_shared_contract() -> None:
@@ -274,7 +286,7 @@ def test_consolidate_gold_writes_manifest_and_parquet_for_completed_batch(
             "source_file_name": "invoice.pdf",
             "document_type": "invoice",
             "document_date": "2024-01-01",
-            "total_amount": 10.0,
+            "total_amount": None,
             "vendor_name": "Acme",
             "currency": "USD",
             "processing_status": "accepted",
@@ -338,8 +350,13 @@ def test_consolidate_gold_writes_manifest_and_parquet_for_completed_batch(
     assert result["failed_count"] == 1
     assert result["gold_row_count"] == 1
     assert result["duplicate_count"] == 1
+    assert result["missing_date_count"] == 0
+    assert result["missing_amount_count"] == 1
+    assert result["date_completion_rate"] == 1.0
+    assert result["amount_completion_rate"] == 0.0
     assert "gold/documents/batch_id=batch-1/documents.parquet" in writes
     assert writes["gold/documents/batch_id=batch-1/manifest.json"]["gold_row_count"] == 1
+    assert writes["gold/documents/batch_id=batch-1/manifest.json"]["missing_amount_count"] == 1
 
 
 def test_consolidate_gold_writes_empty_parquet_when_batch_has_no_valid_documents(

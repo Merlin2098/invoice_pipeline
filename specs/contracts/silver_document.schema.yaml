@@ -84,6 +84,12 @@ properties:
     type:
       - string
       - "null"
+  bedrock_invoked:
+    type: boolean
+  bedrock_completed_fields:
+    type: array
+    items:
+      type: string
   processing_status:
     type: string
     enum:

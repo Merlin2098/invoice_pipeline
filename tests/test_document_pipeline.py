@@ -15,7 +15,7 @@ from src.pipeline.bronze_pipeline import format_ocr_markdown, run_bronze_pipelin
 from src.pipeline.gold_model import build_documents_table, run_gold_pipeline
 from src.pipeline.llm_ollama import MINIMAL_EXTRACTION_SCHEMA, MODEL_NAME, build_ollama_payload
 from src.pipeline.postprocess import clean_string, classify_document_type, normalize_amount, normalize_date
-from src.pipeline.quality import build_local_silver_document, create_failed_document
+from src.pipeline.quality import build_aws_silver_document, build_local_silver_document, create_failed_document
 from src.pipeline.run_context import build_run_context
 from src.pipeline.silver_pipeline import process_with_llm, run_silver_pipeline
 from src.pipeline.specs import load_contract_schema
@@ -274,6 +274,33 @@ def test_failed_document_uses_canonical_failure_shape() -> None:
     jsonschema.validate(failed, schema)
     assert failed["processing_status"] == "failed"
     assert failed["reason_code"] == "technical_processing_failure"
+
+
+def test_aws_quality_marks_missing_analytics_fields_as_warning() -> None:
+    document = build_aws_silver_document(
+        {
+            "document_type": "invoice",
+            "vendor_name": "Acme",
+            "document_date": None,
+            "total_amount": None,
+            "currency": "USD",
+        },
+        run_id="run-1",
+        document_id="missing-analytics",
+        source_s3_key="raw/missing-analytics.tif",
+        source_file_name="missing-analytics.tif",
+        created_at="2026-05-05T00:00:00Z",
+        extraction_engine="textract_analyze_expense",
+        normalization_engine="bedrock",
+        llm_model_id="test-model",
+    )
+
+    schema = load_contract_schema("silver_document.schema.yaml")
+    jsonschema.validate(document, schema)
+    assert document["processing_status"] == "accepted"
+    assert document["quality_status"] == "warning"
+    assert "missing_document_date" in document["quality_flags"]
+    assert "missing_total_amount" in document["quality_flags"]
 
 
 def test_silver_pipeline_routes_valid_rejected_and_failed(monkeypatch) -> None:

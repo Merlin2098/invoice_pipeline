@@ -27,6 +27,8 @@ DOCUMENT_COLUMNS = (
     "extraction_engine",
     "normalization_engine",
     "llm_model_id",
+    "bedrock_invoked",
+    "bedrock_completed_fields",
     "processing_status",
     "quality_status",
     "quality_flags",

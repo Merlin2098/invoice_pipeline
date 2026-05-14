@@ -87,6 +87,14 @@ def should_use_bedrock(candidate: dict[str, Any]) -> bool:
     )
 
 
+def _missing_normalized_fields(candidate: dict[str, Any]) -> set[str]:
+    return {
+        field
+        for field in ("vendor_name", "document_date", "total_amount", "currency")
+        if candidate.get(field) in (None, "")
+    }
+
+
 class AwsPipelineRunner:
     def __init__(
         self,
@@ -200,9 +208,14 @@ class AwsPipelineRunner:
         bronze_key: str | None = None,
     ) -> dict[str, Any]:
         document_id = Path(request.source_file_name).stem
-        if self.bedrock and should_use_bedrock(candidate):
+        bedrock_invoked = bool(self.bedrock and should_use_bedrock(candidate))
+        bedrock_completed_fields: list[str] = []
+        if bedrock_invoked and self.bedrock:
+            missing_before = _missing_normalized_fields(candidate)
             try:
                 candidate.update(self.bedrock.normalize(candidate))
+                missing_after = _missing_normalized_fields(candidate)
+                bedrock_completed_fields = sorted(missing_before - missing_after)
             except Exception as exc:
                 self.logger.exception(
                     {
@@ -212,6 +225,8 @@ class AwsPipelineRunner:
                     }
                 )
                 candidate.setdefault("quality_flags", []).append("bedrock_request_failed")
+        candidate["bedrock_invoked"] = bedrock_invoked
+        candidate["bedrock_completed_fields"] = bedrock_completed_fields
 
         return build_aws_silver_document(
             candidate,
@@ -221,7 +236,7 @@ class AwsPipelineRunner:
             source_file_name=request.source_file_name,
             created_at=request.created_at,
             extraction_engine="textract_analyze_expense",
-            normalization_engine="bedrock" if self.bedrock else "textract_only",
+            normalization_engine="bedrock" if bedrock_invoked else "textract_only",
             llm_model_id=self.bedrock_model_id if self.bedrock else None,
         )
 

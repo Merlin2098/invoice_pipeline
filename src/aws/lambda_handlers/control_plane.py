@@ -842,9 +842,25 @@ def consolidate_gold(event: dict[str, Any], _context: Any = None) -> dict[str, A
 
     history_records = object_store.list_json(f"{prefixes['silver_valid_prefix'].strip('/')}/")
     documents = build_documents_table(valid_records, history_records=history_records)
+    gold_row_count = int(len(documents))
     duplicate_count = (
         int(documents["is_duplicate"].fillna(False).sum())
         if "is_duplicate" in documents
+        else 0
+    )
+    missing_date_count = (
+        int(documents["document_date"].isna().sum())
+        if "document_date" in documents
+        else 0
+    )
+    missing_amount_count = (
+        int(documents["total_amount"].isna().sum())
+        if "total_amount" in documents
+        else 0
+    )
+    bedrock_invoked_count = (
+        int(documents["bedrock_invoked"].fillna(False).sum())
+        if "bedrock_invoked" in documents
         else 0
     )
     gold_prefix = prefixes["gold_prefix"].strip("/")
@@ -857,8 +873,21 @@ def consolidate_gold(event: dict[str, Any], _context: Any = None) -> dict[str, A
         "valid_count": len(terminal["valid"]),
         "rejected_count": len(terminal["rejected"]),
         "failed_count": len(terminal["failed"]),
-        "gold_row_count": int(len(documents)),
+        "gold_row_count": gold_row_count,
         "duplicate_count": duplicate_count,
+        "missing_date_count": missing_date_count,
+        "missing_amount_count": missing_amount_count,
+        "date_completion_rate": (
+            (gold_row_count - missing_date_count) / gold_row_count
+            if gold_row_count
+            else 0
+        ),
+        "amount_completion_rate": (
+            (gold_row_count - missing_amount_count) / gold_row_count
+            if gold_row_count
+            else 0
+        ),
+        "bedrock_invoked_count": bedrock_invoked_count,
         "run_ids": sorted({document["run_id"] for document in expected_documents}),
         "missing_documents": [],
         "created_at": _utc_now_iso(),
