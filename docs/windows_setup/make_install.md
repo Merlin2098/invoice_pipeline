@@ -95,14 +95,14 @@ This gives you a `PATH`-style workflow without requiring admin rights.
 If you want an explicit corporate path and do not want to touch `PATH`:
 
 ```powershell
-C:\approved-tools\make\bin\make.exe test
+C:\approved-tools\make\bin\make.exe lint
 C:\approved-tools\make\bin\make.exe package
 ```
 
 Or use the repository wrapper:
 
 ```powershell
-.\scripts\windows\run_make.ps1 -MakePath 'C:\approved-tools\make\bin\make.exe' test
+.\scripts\windows\run_make.ps1 -MakePath 'C:\approved-tools\make\bin\make.exe' lint
 ```
 
 ### How the Template Wrapper Behaves
@@ -132,7 +132,7 @@ For GNU Make:
 ```powershell
 make --version
 .\scripts\windows\run_make.ps1
-.\scripts\windows\run_make.ps1 -n test
+.\scripts\windows\run_make.ps1 -n lint
 ```
 
 For ready-to-copy `make` command examples, see [make_cheatlist.md](make_cheatlist.md).

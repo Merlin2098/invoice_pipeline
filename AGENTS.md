@@ -2,60 +2,41 @@
 
 ## Purpose
 
-This repository is an AWS + Terraform data engineering template used to
-bootstrap host repositories.
+This repository contains the Invoice Intelligence Pipeline: a cloud-first AWS
+data engineering project for invoice ingestion, OCR extraction, quality-aware
+document routing, and Gold analytics over a Terraform-managed data lake.
 
-Agents should support work that stays valid both in this template repository and
-in host projects installed from it:
-
-* Python data jobs and helpers
-* SQL transformations
-* Terraform infrastructure
-* Config-driven workflows
-* Lightweight testing and packaging workflows
+Agents should help keep the project ready for public GitHub presentation and
+cloud operation. The current focus is the deployed AWS MVP, not local test
+harnesses or repository-template bootstrapping.
 
 ---
 
 ## Knowledge Sources
 
-Use:
+Use these repository sources first:
 
-* `ai/skills/` for patterns and best practices
-* `ai/skills.yaml` as the authoritative skills index
-* `ai/context.yaml` as the authoritative AI context-generation configuration
+* `README.md` for the public project narrative and operating workflow
+* `docs/` for architecture notes, runbooks, deployment history, and diagrams
+* `specs/` for contracts, quality rules, metrics, prompts, and design records
+* `ai/skills/` for implementation guidance and best practices
+* `ai/skills.yaml` and `ai/context.yaml` for AI guidance configuration
 
-These files are guidance and configuration inputs copied into host repositories.
-They are not executable orchestration logic.
+The AI guidance files are support material. They are not hidden orchestration
+logic and should not become a framework.
 
 ---
 
 ## Working Style
 
-When assisting in this repository or a host repository created from it:
+When assisting in this repository:
 
-1. Understand the objective and current repository shape
-2. Search for existing implementations before proposing new files
-3. Identify relevant skills from `ai/skills/`
-4. Apply patterns as guidance, not as rigid rules
-5. Prefer simple, explicit changes over frameworks or abstractions
-6. Validate the result against repository principles and documented workflows
-
----
-
-## Skill Usage
-
-The agent should:
-
-* discover relevant skills automatically from `ai/skills/`
-* treat `ai/skills.yaml` and `ai/context.yaml` as the source of truth for AI guidance inputs
-* match tasks with skill names such as `testing`, `ci_cd`, `mocks`, `glue`, or `terraform`
-* use skills to guide implementation without requiring explicit invocation by the user
-
-The agent must not:
-
-* require explicit skill invocation
-* enforce rigid one-to-one mappings between tasks and skills
-* create skill composition or orchestration logic
+1. Understand the current AWS, Terraform, and pipeline shape before editing
+2. Search for existing implementations before creating files
+3. Prefer explicit, readable changes over abstractions
+4. Keep SQL, infrastructure, runtime code, configuration, and docs separated
+5. Preserve cloud-first behavior and public-readiness of the repository
+6. Validate changes with explicit commands where practical
 
 ---
 
@@ -66,115 +47,92 @@ Use explicit project commands only.
 Preferred workflow:
 
 * use `make <target>` when `make` is available
-* in restricted Windows environments, use `scripts/windows/run_make.ps1` or the documented wrapper flow under `docs/windows_setup/`
-* run Terraform commands directly and intentionally from `infra/`
+* in restricted Windows environments, use `scripts/windows/run_make.ps1`
+* run Terraform commands directly and intentionally from `infra/envs/dev`
+* generate Lambda bundles through the existing packaging script or `make package`
 
-Do not introduce hidden automation.
+Do not introduce hidden automation, background orchestration, or agent-only
+execution paths.
 
 ---
 
 ## Package Manager Awareness
 
-Host repositories created from this template may use either `pip` or `uv`.
+This repository uses `uv` and `pyproject.toml` as the primary Python workflow.
 
-The agent should:
+Agents should:
 
-* inspect the files present in the repository before choosing a dependency workflow
-* follow `requirements*.txt` workflows when the host is configured for `pip`
-* follow `pyproject.toml` and `uv.lock` workflows when the host is configured for `uv`
-* keep packaging, testing, and environment guidance aligned with the package-manager choice already installed in the host
+* inspect dependency files before changing packaging
+* keep `pyproject.toml` and `uv.lock` aligned
+* avoid reintroducing local test dependencies unless explicitly requested
+* keep Lambda-only dependencies in `requirements.lambda.txt`
 
 ---
 
 ## Approval Boundaries
 
-### Never without approval
+### Never without explicit approval
 
 * `terraform apply`
 * `terraform destroy`
-* modify infrastructure state
-* overwrite data or generated artifacts intentionally owned by users
+* modifying Terraform state
+* deleting or overwriting user-owned data or generated artifacts
 
 ### Ask before
 
-* IAM changes
-* Terraform module changes
+* IAM policy or role changes
+* Terraform module interface changes
 * paid AWS services or production-grade infrastructure defaults
-* data contract updates
+* data contract changes
+* changes that alter deployed runtime behavior
 
 ---
 
 ## Principles
 
-* separation of concerns across infra, code, and config
-* SQL separate from Python
-* config-driven pipelines
-* contracts-first validation
-* Terraform should optimize for destroyability, low-cost dev environments, reproducibility, and explicit resource ownership
-* prefer simple over complex
-* keep workflows explicit and reproducible
-
----
-
-## Constraints
-
-The agent must not:
-
-* create orchestration frameworks
-* define skill composition systems
-* introduce meta-systems
-* recreate hidden framework-like behavior
+* Cloud-first AWS MVP behavior is the source of truth
+* Terraform remains destroyable, reproducible, low-cost, and explicit
+* Runtime permissions should follow least privilege
+* Data contracts and quality rules define promoted outputs
+* CloudWatch logs and metrics should make every run inspectable
+* Public docs should describe validated cloud behavior clearly
+* Local tooling exists only to support packaging, formatting, and development
 
 ---
 
 ## Existing Code Awareness
 
-Before generating any new file or artifact, the agent must:
+Before generating a new file or artifact:
 
-1. search the repository for existing implementations
-2. prefer modifying or extending existing files over creating new ones
-3. avoid duplicating Terraform modules, ETL jobs, SQL transformations, or config files
+1. Search the repository for an existing equivalent
+2. Prefer modifying or extending current files
+3. Avoid duplicating Terraform modules, Lambda handlers, Glue jobs, SQL, specs,
+   or configuration files
 
-If similar functionality already exists, reuse or refactor it instead of
-creating parallel structures.
-
-Only create new files when:
-
-* no equivalent exists
-* or the user explicitly requests it
+Only create new files when no equivalent exists or the user explicitly requests
+one.
 
 ---
 
-## Skill Trigger Map
+## Cloud Areas
 
-The map below is indicative, not exhaustive. If a task does not appear here,
-follow the discovery flow in *Skill Usage*.
-
-| When the task involves… | Consult |
+| When the task involves... | Consult |
 |---|---|
-| Designing or editing a Python ETL job | `ai/skills/data/etl_patterns.md`, `ai/skills/python/python_project_guidance.md` |
-| Validation or data quality (Python/SQL/AWS) | `ai/skills/data/data_quality_guidance.md`, `ai/skills/data/data_contracts.md` |
-| Python tests | `ai/skills/python/python_testing_quality.md` |
-| New SQL or transformation refactor | `ai/skills/sql/sql_workflow_guidance.md` |
-| AWS Glue (jobs, crawlers, catalog) | `ai/skills/aws/glue_jobs.md` |
-| AWS Lambda | `ai/skills/aws/lambda_functions.md`, `ai/skills/aws/iam_policies.md` |
-| Step Functions orchestration | `ai/skills/aws/step_functions.md` |
-| Scheduling / event-driven | `ai/skills/aws/eventbridge.md` |
-| S3 / data lake storage | `ai/skills/aws/s3_data_lake.md` |
-| AWS logging / observability | `ai/skills/aws/cloudwatch_logging.md` |
-| IAM (policies, roles) | `ai/skills/aws/iam_policies.md`, `ai/skills/terraform/iam_least_privilege.md` |
-| Writing or refactoring Terraform | `ai/skills/terraform/terraform_style.md`, `ai/skills/terraform/modules.md` |
-| Terraform state / backends | `ai/skills/terraform/state_management.md` |
-| Terraform tests / mocks | `ai/skills/terraform/terraform_testing.md`, `ai/skills/terraform/terraform_mocks.md` |
-| Terraform CI/CD | `ai/skills/terraform/terraform_ci_cd.md`, `ai/skills/terraform/terraform_orchestration.md` |
-| Importing existing resources | `ai/skills/terraform/terraform_import_manual.md`, `ai/skills/terraform/terraform_import_discovery.md` |
-| Module refactor / multi-env | `ai/skills/terraform/terraform_refactoring.md`, `ai/skills/terraform/terraform_stacks.md` |
-| Infra security review | `ai/skills/terraform/terraform_security.md` |
+| Terraform infrastructure | `ai/skills/terraform/terraform_style.md`, `ai/skills/terraform/modules.md` |
+| Terraform state or backend work | `ai/skills/terraform/state_management.md` |
+| IAM permissions | `ai/skills/aws/iam_policies.md`, `ai/skills/terraform/iam_least_privilege.md` |
+| Lambda handlers | `ai/skills/aws/lambda_functions.md` |
+| Step Functions | `ai/skills/aws/step_functions.md` |
+| S3 data lake layout | `ai/skills/aws/s3_data_lake.md` |
+| Glue and Gold analytics | `ai/skills/aws/glue_jobs.md` |
+| CloudWatch logging and metrics | `ai/skills/aws/cloudwatch_logging.md` |
+| Data contracts and quality rules | `ai/skills/data/data_contracts.md`, `ai/skills/data/data_quality_guidance.md` |
+| SQL or Athena behavior | `ai/skills/sql/sql_workflow_guidance.md` |
 
 ---
 
 ## Philosophy
 
-Simple. Explicit. Reproducible.
+Simple. Explicit. Cloud-validatable.
 
-AI is a helper for the host project, not the system itself.
+AI helps maintain and explain the project; it is not the system itself.

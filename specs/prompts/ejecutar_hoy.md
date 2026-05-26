@@ -56,7 +56,7 @@ Current architecture includes:
 
 The current pipeline evolved from a local OCR/LLM ETL experiment into a distributed serverless event-driven platform.
 
-Recent smoke tests exposed:
+Recent smoke validations exposed:
 
 * runtime IAM drift,
 * insufficient observability,
@@ -75,7 +75,7 @@ Goals:
 * runtime IAM verification,
 * Lambda permission checks,
 * SQS mapping validation,
-* operational safety before smoke tests.
+* operational safety before smoke validations.
 
 Expected outputs include:
 

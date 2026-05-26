@@ -2,27 +2,24 @@
 
 ## Overview
 
-Invoice Intelligence Pipeline is an AWS and Terraform data engineering template
-for document ingestion, invoice extraction, quality validation, and layered data
-lake outputs. The repository keeps a local development baseline while the active
-cloud MVP lives under [`infra/envs/dev`](infra/envs/dev/README.md).
+Invoice Intelligence Pipeline is a cloud-first AWS data engineering project for
+invoice ingestion, OCR extraction, quality-aware routing, and analytics-ready
+Gold data products.
 
-The current AWS MVP is intentionally small and explicit: S3 receives raw
-documents, SQS buffers upload events, Lambda starts and runs processing stages,
-Step Functions coordinates the document workflow, and CloudWatch captures logs
-and metrics. A Gold analytics layer exposes the Parquet snapshots through Glue
-and Athena, with an optional Bedrock-powered natural-language SQL path.
+The MVP has been validated in AWS with Terraform-managed infrastructure,
+event-driven processing, traceable `run_id` execution, layered S3 outputs,
+CloudWatch observability, and an Athena/Glue analytics path with optional
+Bedrock-assisted natural-language SQL.
 
 ## Business Problem
 
-Invoice processing often starts with semi-structured files and ends with fragile
-manual review, inconsistent fields, and limited traceability. This project
-targets the gap between raw invoice files and reliable downstream data products
-by making every document outcome visible, reproducible, and tied to a `run_id`.
+Invoice operations often start with semi-structured files and end with manual
+review, inconsistent fields, and limited traceability. This project turns raw
+invoice files into inspectable data lake outputs with explicit accepted,
+rejected, and failed outcomes.
 
-The repository is also a bootstrap template, so the implementation favors
-destroyable dev infrastructure, explicit commands, and reusable guidance for
-host projects.
+The goal is a simple, reproducible cloud pipeline that demonstrates the business
+idea without hiding infrastructure or runtime behavior behind a framework.
 
 ## Solution Architecture
 
@@ -31,35 +28,44 @@ The AWS MVP uses a decoupled event flow:
 1. A document is uploaded to `s3://<data-lake-bucket>/raw/<file>` or
    `s3://<data-lake-bucket>/raw/run_id=<run_id>/<file>`.
 2. S3 sends the upload event to the raw ingestion SQS queue.
-3. The `raw-dispatch` Lambda consumes the SQS message, generates a `run_id`
-   when the key does not contain one, and starts Step Functions.
+3. The `raw-dispatch` Lambda consumes the SQS message, creates a `run_id` when
+   needed, and starts Step Functions.
 4. Step Functions runs `ValidateInput -> ExtractOCR -> EnrichWithLLM -> PublishRunMetrics`.
 5. The pipeline writes bronze evidence, silver outcomes, technical errors, and
    CloudWatch metrics.
-
-The local pipeline remains useful for regression tests and fast iteration, but
-the cloud target is the current architecture of record.
+6. Gold consolidation publishes analytics-ready Parquet snapshots for Glue,
+   Athena, and optional Bedrock natural-language querying.
 
 ## Key Features
 
 - Terraform-managed AWS dev environment under `infra/envs/dev`.
-- S3 data lake prefixes for raw, bronze, silver, gold, and errors.
-- SQS buffer with DLQ for raw upload events.
-- Step Functions orchestration with separated OCR and LLM stages.
-- Lambda handlers for dispatch, validation, OCR extraction, LLM enrichment, and
-  metrics publishing.
-- Textract `AnalyzeExpense` integration for invoice extraction.
-- Bedrock permissioning and optional runtime normalization path.
-- Gold analytics layer: Glue Data Catalog table over `gold/documents/`, Athena
-  workgroup with per-query scan limits, and a Bedrock-assisted natural-language
-  SQL generator gated by a SELECT-only validator.
-- Canonical contracts and quality rules under `specs/`.
-- `uv`-based local workflow with Makefile targets for setup, linting, tests,
-  packaging, and AI context refresh.
+- S3 data lake prefixes for raw, bronze, silver, gold, errors, and metrics.
+- SQS buffering with DLQ routing for raw uploads.
+- Step Functions orchestration with separated validation, OCR, enrichment, and
+  metrics stages.
+- Lambda handlers for dispatch, validation, Textract extraction, Bedrock
+  enrichment, and run metrics.
+- Gold analytics layer with Glue Data Catalog, Athena workgroup, scan limits,
+  and SELECT-only SQL validation.
+- Canonical contracts, quality rules, metrics, and prompts under `specs/`.
+- Explicit packaging and Terraform workflows for reproducible deployment.
+
+## Extension Features
+
+- Remote Terraform state backend in S3 with stage-level locking for safer team
+  collaboration and environment isolation.
+- Pluggable LLM model selection so the enrichment and natural-language SQL
+  stages can use different Bedrock or compatible LLM models as business needs
+  evolve.
+- Glue job replacement path for Lambda processing stages when document volume,
+  runtime, or batch size exceeds Lambda processing limits.
+- Data warehouse consolidation path for publishing curated Gold data into
+  Redshift, Snowflake, or another warehouse according to business reporting and
+  governance requirements.
 
 ## Architecture Diagram
 
-Graphviz
+![Invoice Pipeline AWS architecture](docs/resources/architecture_diagram.png)
 
 The maintainable Graphviz source is
 [`docs/resources/architecture.dot`](docs/resources/architecture.dot).
@@ -107,94 +113,43 @@ consolidate-gold ----> S3 gold/documents/batch_id=<batch_id>/
                                     +------- Bedrock NL -> SQL
 ```
 
-## Processing Flow
-
-The deployed state machine in
-[`infra/envs/dev/state_machine.asl.json`](infra/envs/dev/state_machine.asl.json)
-contains these runtime states:
-
-- `ValidateInput` checks required fields, supported extensions, and `run_id`
-  traceability.
-- `ExtractOCR` calls Textract, writes bronze technical evidence, and returns an
-  OCR candidate or a failed document.
-- `EnrichWithLLM` reads the OCR candidate or bronze record, optionally calls
-  Bedrock, and writes the final silver or error document.
-- `PublishRunMetrics` emits custom metrics to CloudWatch.
-
-If OCR is skipped or fails, the workflow bypasses LLM enrichment and publishes
-metrics for that outcome.
-
-## AWS Services Used
-
-- Amazon S3 for artifact storage and layered data lake storage.
-- Amazon SQS for raw ingestion buffering and DLQ routing.
-- AWS Lambda for dispatch, validation, extraction, enrichment, and metrics.
-- AWS Step Functions for workflow orchestration.
-- Amazon Textract for invoice-focused OCR and expense extraction.
-- Amazon Bedrock for optional LLM-assisted normalization and natural-language
-  to Athena SQL generation.
-- AWS Glue Data Catalog for Gold table metadata.
-- Amazon Athena for SQL queries over Gold Parquet snapshots.
-- Amazon CloudWatch for logs and custom metrics.
-- AWS IAM for scoped runtime permissions.
-- AWS Budgets for dev cost tracking.
-
 ## Repository Structure
 
 ```text
 ai/                 Agent guidance, skills, and context configuration
 artifacts/lambda/   Generated Lambda deployment bundle
-docs/               Architecture notes, runbooks, prompts, and resources
+docs/               Architecture notes, runbooks, deployment history, and diagrams
 infra/envs/dev/     Executable Terraform entrypoint for the AWS MVP
 infra/modules/      Focused reusable Terraform modules
+scripts/quality/    Ruff lint and format wrappers
 scripts/windows/    Windows setup and Makefile wrapper helpers
-specs/              Contracts, quality rules, metrics, and design specs
-src/                Python pipeline and AWS runtime code
-src/analytics/      Athena client, SQL validator, and Bedrock SQL generator
-tests/              Unit tests, AWS smoke helpers, and reference fixtures
+specs/              Contracts, quality rules, metrics, prompts, and design specs
+src/                Python pipeline, Lambda handlers, Glue jobs, and analytics code
 ```
 
-The older `infra/` root stack is kept as a transition baseline; new AWS MVP work
-should use `infra/envs/dev`.
+The older `infra/` root stack is kept as a transition baseline. New AWS MVP
+work should use `infra/envs/dev`.
 
 ## Data Lake Layers
 
-- `raw/`: source documents uploaded directly as `raw/<file>` or by run using
-  `raw/run_id=<run_id>/<file>`.
+- `raw/`: source documents uploaded directly or under `run_id=<run_id>`.
 - `bronze/textract-json/`: Textract technical evidence and extraction metadata.
 - `silver/valid/`: canonical accepted documents.
 - `silver/rejected/`: canonical documents rejected by quality or business rules.
-- `errors/`: technical processing failures, including failed silver documents.
-- `gold/documents/batch_id=<batch_id>/`: curated Parquet snapshot for a
-  completed batch. Gold preserves accepted documents and marks cross-run
-  duplicates with `document_fingerprint`, `business_key`, and duplicate status
-  fields.
-- `gold/manifests/batch_id=<batch_id>/`: batch manifest JSON kept outside the
-  Athena table prefix so `gold_documents` partitions contain only Parquet files.
+- `errors/`: technical processing failures and failed silver documents.
+- `gold/documents/batch_id=<batch_id>/`: curated Parquet snapshots for Athena.
+- `gold/manifests/batch_id=<batch_id>/`: batch manifests kept outside the table
+  prefix.
 
 ## Gold Analytics Layer
 
-Once a batch lands under `gold/documents/batch_id=<batch_id>/`, it is queryable
-through Athena via a Glue catalog table. The layer is provisioned in
+The Gold layer is provisioned in
 [`infra/envs/dev/analytics.tf`](infra/envs/dev/analytics.tf) and includes:
 
-- A Glue database `invoice_pipeline_gold` with the `gold_documents` external
-  table partitioned by `batch_id`.
-- An Athena workgroup `invoice-pipeline-dev` that enforces a 100 MB per-query
-  scan cutoff and writes results to `s3://<data-lake-bucket>/athena-results/`.
-- A Python package [`src/analytics/`](src/analytics/) that exposes a small CLI
-  with three subcommands: `repair-partitions`, `sql`, and `ask`.
-
-The `ask` command sends a user question to Amazon Bedrock together with the
-table schema and the system prompt at
-[`specs/prompts/bedrock_analytics_sql_prompt.md`](specs/prompts/bedrock_analytics_sql_prompt.md).
-The generated SQL is run through a strict validator
-([`src/analytics/sql_validator.py`](src/analytics/sql_validator.py)) that:
-
-- accepts only single `SELECT` statements,
-- rejects DDL, DML, and `SELECT *`,
-- limits queries to known tables and columns from the schema registry, and
-- enforces a default `LIMIT 100` (max `1000`).
+- a Glue database `invoice_pipeline_gold`,
+- an external table `gold_documents` partitioned by `batch_id`,
+- an Athena workgroup `invoice-pipeline-dev` with per-query scan limits,
+- a Python analytics CLI under [`src/analytics/`](src/analytics/).
 
 Example usage after deployment:
 
@@ -208,21 +163,12 @@ python -m src.analytics.cli sql "SELECT vendor_name, COUNT(document_id) AS docs 
 python -m src.analytics.cli ask "How many accepted invoices per vendor in the latest batch?"
 ```
 
-## Current Pipeline Design
+Generated SQL is validated by
+[`src/analytics/sql_validator.py`](src/analytics/sql_validator.py). It accepts
+only single `SELECT` statements, rejects unsafe operations, limits references to
+known schema objects, and enforces a bounded `LIMIT`.
 
-The pipeline separates deterministic extraction from probabilistic enrichment.
-Textract owns invoice OCR and expense extraction. Bedrock is reserved for
-normalization or ambiguity resolution after OCR succeeds. Quality rules and
-contracts keep output status explicit instead of silently promoting bad records.
-
-The currently deployed AWS run validated the control plane through S3, SQS,
-Lambda, Step Functions, bronze writes, failed silver routing, and `run_id`
-traceability. Gold consolidation is implemented as an explicit Parquet snapshot
-step for stable `silver/valid` output, but a successful deployed extraction run
-is still blocked at Textract by an AWS account or service subscription
-requirement, not by Terraform wiring.
-
-## Specs & ADRs
+## Specs And Design Records
 
 Specs and decision records live in [`specs/`](specs/). Key references include:
 
@@ -230,29 +176,28 @@ Specs and decision records live in [`specs/`](specs/). Key references include:
 - [`SPEC-005-structured-logging.md`](specs/SPEC-005-structured-logging.md)
 - [`SPEC-006-ocr-llm-separation.md`](specs/SPEC-006-ocr-llm-separation.md)
 - [`SPEC-007-terraform-remote-state.md`](specs/SPEC-007-terraform-remote-state.md)
-- [`SPEC-008-analythic-layer.md`](specs/SPEC-008-analythic-layer.md) for the
-  Athena + Bedrock Gold analytics layer.
-- [`specs/contracts/`](specs/contracts/) for canonical document schemas.
-- [`specs/quality/`](specs/quality/) for bronze, silver, and gold rules.
+- [`SPEC-008-analythic-layer.md`](specs/SPEC-008-analythic-layer.md)
+- [`specs/contracts/`](specs/contracts/) for canonical document schemas
+- [`specs/quality/`](specs/quality/) for bronze, silver, and gold rules
 - [`specs/metrics/pipeline_metrics.yaml`](specs/metrics/pipeline_metrics.yaml)
-  for metrics expectations.
+  for metrics expectations
 
-## Local Development
+## Development And Packaging
 
-This repository uses Python 3.11+ and `uv` as the primary package workflow.
+This repository uses Python 3.11+ and `uv`.
 
 ```powershell
 make init
 make lint
-make test
+make fmt
 make package
 ```
 
 On restricted Windows environments, use the wrapper flow documented under
-[`docs/windows_setup/`](docs/windows_setup/) or run:
+[`docs/windows_setup/`](docs/windows_setup/), for example:
 
 ```powershell
-.\scripts\windows\run_make.ps1 test
+.\scripts\windows\run_make.ps1 package
 ```
 
 The Lambda bundle is generated at
@@ -273,96 +218,46 @@ terraform -chdir=infra/envs/dev plan -var-file=terraform.tfvars.example
 
 For a real deployment, create the artifact bucket first, upload
 `artifacts/lambda/control_plane_bundle.zip` to the configured artifact key, then
-plan and apply the full stack. Do not run `terraform apply` without explicit
-approval and a reviewed plan.
+plan and apply the stack. Do not run `terraform apply` without explicit approval
+and a reviewed plan.
 
 Remote state is prepared through `backend.tf.example`; copy it to `backend.tf`
 only when the backend bucket and state policy are intentionally configured.
 
-## Operational Scripts
+## Operational Validation
 
-AWS smoke and validation helpers live in [`tests/aws`](tests/aws):
-
-- `smoke-precheck.ps1` checks required local and AWS prerequisites.
-- `validate-iam.ps1` validates IAM assumptions and caller identity.
-- `validate-runtime-access.ps1` invokes deployed Lambdas with dry-run payloads.
-- `validate-event-mappings.ps1` checks event-source mapping wiring.
-- `validate-logging.ps1` checks CloudWatch log groups and retention.
-- `validate-tags-budget.ps1` checks required tags and budget filters.
-- `smoke-direct-raw-upload.ps1` uploads raw documents, invokes Gold finalization,
-  and downloads logs plus Bronze/Silver/Gold outputs.
-- `validate_run.ps1` supports deployed run validation.
-
-Windows workflow helpers live in [`scripts/windows`](scripts/windows):
-
-- `setup_env.ps1`
-- `update_venv.ps1`
-- `run_make.ps1`
-
-## Smoke Tests
-
-Use the AWS smoke and validation scripts after Terraform outputs are available.
-The runtime dry-run check invokes each deployed Lambda with a safe payload:
-
-```powershell
-.\tests\aws\validate-runtime-access.ps1
-```
-
-To trigger the actual pipeline after deployment, upload a supported document to
-the raw prefix:
+After deployment, trigger the pipeline by uploading a supported document to the
+raw prefix:
 
 ```powershell
 $lake = terraform -chdir=infra/envs/dev output -raw data_lake_bucket_name
 aws s3 cp .\data\raw\0000089370.tif s3://$lake/raw/run_id=run-001/0000089370.tif
 ```
 
-## Observability
-
-CloudWatch log groups are explicitly managed for Lambda functions and Step
-Functions. The metrics stage publishes custom document metrics such as processed,
-accepted, rejected, failed, field presence, and unknown document type counts.
-
-Current observability is useful for control-plane validation and failed-path
-debugging. Successful extraction quality metrics require Textract access to be
-enabled and a successful AWS run to be completed.
+Use CloudWatch Logs, Step Functions execution history, S3 output prefixes, Glue
+partitions, and Athena queries to inspect results end to end.
 
 ## Current Status
 
-The AWS infrastructure and trigger path are viable. A first AWS execution
-confirmed:
+The cloud MVP has validated the business idea and the operational path:
 
 - S3 raw upload trigger.
 - SQS to Lambda dispatch.
-- Step Functions execution start.
-- Bronze evidence write.
-- Failed silver routing under `errors/`.
+- Step Functions execution.
+- Textract-backed OCR stage.
+- Bedrock-ready enrichment boundary.
+- Bronze, Silver, Gold, and error routing.
 - `run_id` traceability.
-
-The current blocker is account or service access to Textract `AnalyzeExpense`.
-The observed failure is `SubscriptionRequiredException`, so successful
-`silver/valid`, business-rule `silver/rejected`, active Bedrock normalization,
-and automated gold generation remain unvalidated in the deployed AWS path.
+- CloudWatch logging and metrics.
+- Glue/Athena analytics over Gold outputs.
 
 ## Roadmap
 
-- Enable or move to an AWS account with usable Textract `AnalyzeExpense` access.
-- Re-run the same reference document with a new `run_id`.
-- Confirm successful outputs under `silver/valid/` or `silver/rejected/`.
-- Activate Bedrock normalization only after Textract succeeds.
-- Add automated gold consolidation after silver output is stable.
-- Validate the Athena + Bedrock analytics path against a live Gold batch and
-  publish reference queries.
+- Polish public documentation and diagrams.
+- Publish representative architecture and execution evidence.
 - Harden alarms, retries, selective reprocessing, and cost monitoring.
-
-## Lessons Learned
-
-- Separate OCR and LLM responsibilities to reduce retry blast radius and avoid
-  paying for repeated extraction when enrichment fails.
-- Treat local execution as a regression baseline, not the cloud target.
-- Keep Terraform entrypoints explicit and environment-scoped.
-- Validate runtime IAM and event wiring before chasing application logic.
-- Route technical failures into canonical outputs so failed runs remain
-  inspectable.
+- Promote environment-specific settings for future non-dev deployments.
+- Keep Terraform plans small, explicit, and reviewable.
 
 ## License
 

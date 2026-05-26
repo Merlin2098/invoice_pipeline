@@ -8,7 +8,7 @@
 
 ## 1. Contexto
 
-Tras desplegar la capa SQS (cola standard + DLQ + event source mapping + idempotency guard en `process_document`), se ejecutaron tres smoke tests consecutivos con 40 documentos TIF cada uno. Los tres exhibieron el mismo patrón de fallo: **40/40 ejecuciones fallidas con `403 Forbidden` en `HeadObject`**, 0 documentos procesados en bronze/silver, y DLQ creciendo hasta 40 mensajes.
+Tras desplegar la capa SQS (cola standard + DLQ + event source mapping + idempotency guard en `process_document`), se ejecutaron tres validaciones smoke consecutivas con 40 documentos TIF cada una. Las tres exhibieron el mismo patrón de fallo: **40/40 ejecuciones fallidas con `403 Forbidden` en `HeadObject`**, 0 documentos procesados en bronze/silver, y DLQ creciendo hasta 40 mensajes.
 
 ---
 
@@ -138,7 +138,7 @@ Los 40 mensajes en DLQ ya no son procesables (los archivos siguen en `raw/` pero
 aws sqs purge-queue --queue-url $DLQ_URL
 ```
 
-### Recomendación 4 — Hook de validación previo a smoke tests
+### Recomendación 4 — Hook de validación previo a validaciones smoke
 
 Antes de subir 40 archivos, ejecutar un check rápido contra una key inexistente con el rol del Lambda (no con el usuario CLI):
 

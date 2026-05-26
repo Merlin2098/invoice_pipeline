@@ -7,7 +7,7 @@
 
 ## Context
 
-The invoice pipeline grew from a local OCR/LLM ETL experiment into a distributed serverless platform: S3 raw → SQS (`raw-ingestion`) → `raw_dispatch` Lambda → Step Functions → Textract + optional Bedrock → Bronze/Silver/Error layers. Recent smoke tests surfaced three structural weaknesses that the user wants to address through a coordinated, low-blast-radius rollout:
+The invoice pipeline grew from a local OCR/LLM ETL experiment into a distributed serverless platform: S3 raw → SQS (`raw-ingestion`) → `raw_dispatch` Lambda → Step Functions → Textract + optional Bedrock → Bronze/Silver/Error layers. Recent smoke validations surfaced three structural weaknesses that the user wants to address through a coordinated, low-blast-radius rollout:
 
 1. **Runtime IAM drift** — 40 messages went to DLQ during smoke because the Lambda execution role's effective permissions diverged from what passed CLI checks. No automated *runtime* IAM verification exists today.
 2. **Insufficient observability** — Stdlib `logging` with `%`-format strings, no correlation IDs (`run_id`, `execution_id`, `document_id`, `source_s3_key`), and no `retention_in_days` on the four CloudWatch log groups.
@@ -132,7 +132,7 @@ Phase 0 (baseline + cleanup)
 - MODIFIED: [infra/envs/dev/main.tf](infra/envs/dev/main.tf) — `retention_in_days = 14` on the four `aws_cloudwatch_log_group` resources.
 
 **Validation:**
-- pytest captures one record per handler and asserts JSON-parseable + required keys.
+- Static checks and deployed log inspection confirm one record per handler with JSON-parseable output and required keys.
 - Post-deploy: CloudWatch Insights `stats count() by execution_id, stage` returns exactly one row per (execution_id, stage) for a smoke run.
 - `aws logs describe-log-groups` confirms `retentionInDays == 14`.
 
@@ -238,11 +238,11 @@ Phase 0 (baseline + cleanup)
 
 ---
 
-## 7. Testing Strategy
+## 7. Validation Strategy
 
-- **Unit (all phases):** existing pytest suite stays green. SPEC-006 adds tests for `run_ocr` and `run_enrichment` independently using the `TextractExpenseExtractor` and `BedrockNormalizer` protocols already defined in [src/pipeline/aws_runtime.py:15-22](src/pipeline/aws_runtime.py#L15).
-- **IAM (Phase 1+):** `simulate-principal-policy` is dry-run by definition — zero spend. Negative test: detach a policy in a scratch branch, confirm preflight fails naming the action.
-- **Logging (Phase 2):** pytest with `caplog` asserts every record is JSON-parseable with the required key set. End-to-end: CloudWatch Insights `stats count() by execution_id, stage` returns exactly one row per (execution_id, stage) for a smoke run.
+- **Runtime checks (all phases):** deployable code paths remain inspectable through Lambda dry-run payloads, CloudWatch logs, and Step Functions execution history.
+- **IAM (Phase 1+):** `simulate-principal-policy` is dry-run by definition — zero spend. Negative validation: detach a policy in a scratch branch, confirm preflight fails naming the action.
+- **Logging (Phase 2):** CloudWatch Insights `stats count() by execution_id, stage` returns exactly one row per (execution_id, stage) for a smoke run.
 - **Local integration (Phase 3):** `LocalJsonStore` + mock Textract returning canned `ExpenseDocuments` + mock Bedrock — exercises the split without AWS spend.
 - **Idempotency (Phase 3):** redrop the same `raw/` object; second run's Step Functions history shows `OcrSkipped? → true → PublishRunMetrics`; Bedrock `InvocationCount` delta = 0.
 

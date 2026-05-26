@@ -11,16 +11,10 @@ repos:
         stages: [pre-commit]
       - id: ruff-lint
         name: ruff lint
-        entry: python scripts/testing/run_ruff_check.py
+        entry: python scripts/quality/run_ruff_check.py
         language: python
         additional_dependencies:
           - ruff
-        pass_filenames: false
-        stages: [manual]
-      - id: pytest
-        name: pytest
-        entry: python scripts/testing/run_pytest.py
-        language: system
         pass_filenames: false
         stages: [manual]
       - id: sync-dependencies

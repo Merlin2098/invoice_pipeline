@@ -23,7 +23,7 @@ DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
     "run": {
         "id_prefix": "invoice-pipeline",
         "manifest_dir": "logs/runs",
-        "reference_manifest_path": "tests/fixtures/reference_documents.yaml",
+        "reference_manifest_path": None,
         "retention_days": 30,
     },
     "ocr": {

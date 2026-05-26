@@ -1,2 +1,1 @@
-"""Example job package used by template tests."""
-
+"""Example job package used by the pipeline template."""

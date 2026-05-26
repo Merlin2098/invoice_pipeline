@@ -1,8 +1,8 @@
-# Local MVP: Implementation, Ollama Tests, and Findings
+# Local MVP: Implementation, Ollama Evidence, and Findings
 
 ## Objective
 
-This document summarizes how the local invoice pipeline MVP is currently implemented, which Ollama-related tests and evidence were reviewed, and which main findings were identified from the stress run observed in the project.
+This document summarizes how the local invoice pipeline MVP was implemented, which Ollama-related evidence was reviewed, and which main findings were identified from the stress run observed in the project.
 
 The main evidence used for this summary comes from:
 
@@ -12,7 +12,6 @@ The main evidence used for this summary comes from:
 - `src/pipeline/gold_model.py`
 - `src/services/ocr_service.py`
 - `src/services/llm_service.py`
-- `tests/test_olama.py`
 - `logs/pipeline.log`
 - `logs/gold.log`
 - `data/gold/documents.parquet`
@@ -149,22 +148,22 @@ The current gold layer is centered on a single primary output:
 
 - `data/gold/documents.parquet`
 
-## Ollama Tests Performed
+## Ollama Evidence Reviewed
 
-### 1. Manual exploratory test
+### 1. Manual exploratory evidence
 
-The file `tests/test_olama.py` shows an exploratory OCR + Ollama test over a sample file in `data/raw/ti31379007_9013.tif`.
+The local OCR + Ollama path was reviewed with a sample file in `data/raw/ti31379007_9013.tif`.
 
-Characteristics of this test:
+Characteristics of this evidence:
 
 - uses local Ollama
 - expects pure JSON as output
 - validates the availability of the configured model
-- acts as a manual smoke test, not a robust benchmark
+- acts as a manual smoke validation, not a robust benchmark
 
-### 2. Unit and internal contract tests
+### 2. Internal contract evidence
 
-`tests/test_document_pipeline.py` covers important parts of the flow:
+The historical local review covered important parts of the flow:
 
 - root pipeline execution order
 - bronze writing behavior
@@ -175,7 +174,7 @@ Characteristics of this test:
 - parquet generation in gold
 - silver and gold metrics
 
-These tests validate code behavior, but they do not represent a real document-quality test over a large batch.
+This validates code behavior, but it does not represent real document-quality evidence over a large batch.
 
 ### 3. Observed stress-run evidence
 

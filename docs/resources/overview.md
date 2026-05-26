@@ -191,7 +191,7 @@ The main pipeline artifacts live under `src/`, `specs/`, and `infra/`:
 
 Locally, the pipeline runs without AWS by exercising the bronze and silver Python modules directly.
 
-The main entry surface is the Lambda handler under `src/aws/lambda_handlers/control_plane.py`, which is also reusable in tests.
+The main entry surface is the Lambda handler under `src/aws/lambda_handlers/control_plane.py`, which is reusable across local and AWS execution paths.
 
 Local flow:
 

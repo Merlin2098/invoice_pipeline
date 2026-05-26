@@ -1,5 +1,5 @@
 # =========================
-# 🐍 Python
+# Python
 # =========================
 __pycache__/
 *.pyc
@@ -23,7 +23,7 @@ dist/
 spec/
 
 # =========================
-# 🧪 Logs & runtime artifacts
+# Logs and runtime artifacts
 # =========================
 logs/
 *.log
@@ -32,13 +32,11 @@ logs/
 artifacts/*.zip
 
 # =========================
-# 🏗️ Terraform
+# Terraform
 # =========================
-# Terraform core
 .terraform/
 **/.terraform/
 
-# State files
 *.tfstate
 *.tfstate.*
 *.tfplan
@@ -47,7 +45,6 @@ tfplan
 tfplan-artifact
 tfplan-destroy
 
-# Crash logs
 crash.log
 
 # Terraform local backend / overrides
@@ -58,7 +55,7 @@ override.tf.json
 *_override.tf.json
 
 # =========================
-# 🔐 Terraform variables (SENSITIVE)
+# Terraform variables (sensitive)
 # =========================
 *.tfvars
 *.auto.tfvars
@@ -67,26 +64,27 @@ override.tf.json
 !*.example
 
 # =========================
-# 🔑 Environment variables
+# Environment variables
 # =========================
 .env
 .env.*
 !infra/env/.env.example
+
 # =========================
-# 🛠️ IDE / Editor
+# IDE / editor
 # =========================
 .vscode/
 
 # =========================
-# 💻 OS files
+# OS files
 # =========================
 .DS_Store
 Thumbs.db
 
-#Local project artifacts
+# Local project artifacts
 .ai/
 
-# Missing entries from template .gitignore
+# Repository-local private prompts and generated guidance
 ai/
 data/
 /prompt/

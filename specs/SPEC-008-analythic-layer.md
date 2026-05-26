@@ -262,8 +262,8 @@ The validator must:
 * optionally limit scan size
 
 For the first implementation phase, SQL validation MUST happen before Athena
-execution and SHOULD be implemented as deterministic Python logic with unit
-tests.
+execution and SHOULD be implemented as deterministic Python logic with explicit
+runtime validation.
 
 ---
 

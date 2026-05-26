@@ -8,7 +8,7 @@ Proposed
 
 ## Context
 
-Recent smoke tests failed with deterministic `403 Forbidden` errors during the `HeadObject` idempotency check executed by the `process_document` Lambda runtime role. The AWS CLI user possessed the required permissions, but the Lambda execution role did not.
+Recent smoke validations failed with deterministic `403 Forbidden` errors during the `HeadObject` idempotency check executed by the `process_document` Lambda runtime role. The AWS CLI user possessed the required permissions, but the Lambda execution role did not.
 
 This incident exposed a critical operational gap:
 
@@ -43,7 +43,7 @@ This creates a high risk of:
 
 ## Decision
 
-Introduce a mandatory preflight validation layer before smoke tests and deployments.
+Introduce a mandatory preflight validation layer before smoke validations and deployments.
 
 Validation will be implemented using:
 
