@@ -40,6 +40,7 @@ locals {
     "${local.gold_manifest_prefix}/",
     "${local.errors_prefix}/",
     "athena-results/",
+    "status/",
   ]
 }
 
@@ -368,6 +369,12 @@ data "aws_iam_policy_document" "consolidate_gold_data_lake_access" {
       "${module.data_lake_bucket.bucket_arn}/${local.gold_manifest_prefix}/*",
     ]
   }
+
+  statement {
+    sid     = "WriteInvoiceStatus"
+    actions = ["s3:PutObject"]
+    resources = ["${module.data_lake_bucket.bucket_arn}/status/*"]
+  }
 }
 
 data "aws_iam_policy_document" "step_function_lambda_invoke" {
@@ -385,6 +392,8 @@ data "aws_iam_policy_document" "step_function_lambda_invoke" {
       "${module.enrich_llm_lambda.lambda_arn}:*",
       module.publish_metrics_lambda.lambda_arn,
       "${module.publish_metrics_lambda.lambda_arn}:*",
+      module.consolidate_gold_lambda.lambda_arn,
+      "${module.consolidate_gold_lambda.lambda_arn}:*",
     ]
   }
 }
@@ -407,11 +416,12 @@ module "invoice_pipeline_state_machine" {
 
   state_machine_name = "${local.name_prefix}-document-pipeline"
   definition = templatefile("${path.module}/state_machine.asl.json", {
-    validate_input_lambda_arn   = module.validate_input_lambda.lambda_arn
-    process_document_lambda_arn = module.process_document_lambda.lambda_arn
-    extract_ocr_lambda_arn      = module.extract_ocr_lambda.lambda_arn
-    enrich_llm_lambda_arn       = module.enrich_llm_lambda.lambda_arn
-    publish_metrics_lambda_arn  = module.publish_metrics_lambda.lambda_arn
+    validate_input_lambda_arn    = module.validate_input_lambda.lambda_arn
+    process_document_lambda_arn  = module.process_document_lambda.lambda_arn
+    extract_ocr_lambda_arn       = module.extract_ocr_lambda.lambda_arn
+    enrich_llm_lambda_arn        = module.enrich_llm_lambda.lambda_arn
+    publish_metrics_lambda_arn   = module.publish_metrics_lambda.lambda_arn
+    consolidate_gold_lambda_arn  = module.consolidate_gold_lambda.lambda_arn
   })
   log_group_name        = "/aws/vendedlogs/states/${local.name_prefix}-document-pipeline"
   log_retention_in_days = var.step_function_log_retention_in_days

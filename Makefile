@@ -8,7 +8,9 @@ UV ?= uv
 BOOTSTRAP_PYTHON ?= python3
 endif
 
-.PHONY: init uv-init uv-update uv-reset package treemap lint fmt clean ai-refresh
+.PHONY: init uv-init uv-update uv-reset package package-chat treemap lint fmt clean ai-refresh \
+        bootstrap-init bootstrap-apply \
+        tf-init tf-plan tf-apply
 
 init:
 	$(BOOTSTRAP_PYTHON) scripts/run_uv_sync.py init
@@ -25,6 +27,9 @@ uv-reset:
 package:
 	uv run python scripts/package.py --package-manager uv
 
+package-chat:
+	uv run python scripts/package.py --package-manager uv --target chat
+
 treemap:
 	$(PYTHON) scripts/generate_treemap.py
 
@@ -39,3 +44,18 @@ clean:
 
 ai-refresh:
 	$(PYTHON) scripts/hooks/ai_refresh.py
+
+bootstrap-init:
+	terraform -chdir=infra/bootstrap init
+
+bootstrap-apply:
+	terraform -chdir=infra/bootstrap apply
+
+tf-init:
+	terraform -chdir=infra/envs/dev init
+
+tf-plan:
+	terraform -chdir=infra/envs/dev plan -var-file=terraform.tfvars -out=tfplan
+
+tf-apply:
+	terraform -chdir=infra/envs/dev apply tfplan

@@ -203,3 +203,21 @@ variable "budget_alert_email" {
   description = "Email address that receives AWS Budget threshold notifications."
   type        = string
 }
+
+variable "web_api_cors_origins" {
+  description = "Allowed CORS origins for the web API. Use the CloudFront domain in production."
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "chat_lambda_package_s3_key" {
+  description = "S3 key of the slim chat Lambda deployment package in the artifact bucket."
+  type        = string
+  default     = "artifacts/lambda/chat_bundle.zip"
+}
+
+variable "chat_lambda_timeout_seconds" {
+  description = "Timeout for the chat Lambda. Must accommodate Bedrock SQL generation + Athena polling + Bedrock summarization."
+  type        = number
+  default     = 60
+}

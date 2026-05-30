@@ -162,3 +162,38 @@ output "raw_ingestion_dlq_url" {
   description = "Dead letter queue URL for failed raw ingestion messages."
   value       = module.raw_ingestion_queue.dlq_url
 }
+
+output "web_api_base_url" {
+  description = "Base URL for the invoice pipeline web API (upload, status, history endpoints)."
+  value       = aws_apigatewayv2_stage.default.invoke_url
+}
+
+output "web_api_id" {
+  description = "API Gateway HTTP API ID."
+  value       = aws_apigatewayv2_api.web_api.id
+}
+
+output "upload_lambda_name" {
+  description = "Lambda function name for the presigned upload endpoint."
+  value       = module.upload_lambda.lambda_name
+}
+
+output "invoice_status_lambda_name" {
+  description = "Lambda function name for the invoice status endpoint."
+  value       = module.invoice_status_lambda.lambda_name
+}
+
+output "list_invoices_lambda_name" {
+  description = "Lambda function name for the invoice list endpoint."
+  value       = module.list_invoices_lambda.lambda_name
+}
+
+output "glue_gold_invoice_summary_table_name" {
+  description = "Glue table name for the gold_invoice_summary Athena view (SPEC-012)."
+  value       = aws_glue_catalog_table.gold_invoice_summary.name
+}
+
+output "chat_lambda_name" {
+  description = "Lambda function name for the POST /chat endpoint."
+  value       = module.chat_lambda.lambda_name
+}
