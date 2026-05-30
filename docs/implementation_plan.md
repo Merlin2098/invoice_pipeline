@@ -263,8 +263,10 @@ Tracked with recommendations in [`docs/adr/ADR-001-phase0-decisions.md`](adr/ADR
 | D5 | Frontend framework | ✅ React + Vite | Phase 5 |
 
 Additionally, **V5 batch close gap** was identified in Phase 0: Gold consolidation
-is not triggered automatically after uploads. This must be scoped into Phase 3 or 4
-to complete the MVP2 user journey.
+is not triggered automatically after uploads. This is now formalized as
+[**SPEC-016 — Automated Gold Consolidation**](../specs/technical/SPEC-016-automated-gold.md)
+and scoped as **Phase 4.5** (after the chat API exists, before the frontend), so the
+portal's `Completed` status is truthful for the MVP2 user journey.
 
 ---
 
@@ -321,6 +323,61 @@ to complete the MVP2 user journey.
 - **Dependencies:** Phase 2 (cleaner schema) preferred; Phase 0/1.
 - **Effort:** M.
 
+### Phase 4.5 — Automated Gold Consolidation (SPEC-016)
+- **Objective:** Close the **V5 gap** (Gold consolidation is manual / out-of-band):
+  make uploaded invoices automatically queryable in Athena once processing
+  completes, so `Status = Completed` ⇒ `Available in Gold` (SPEC-016 FR-002).
+  Without this, the Phase 5 chat UI would report `Completed` for invoices that
+  are not yet visible to the chat/analytics layer.
+- **Deliverables:**
+  - Extend `state_machine.asl.json`: after `PublishRunMetrics`, add `ConsolidateGold`
+    (invoke existing `consolidate_gold` Lambda) → `UpdateStatusCompleted` → `PipelineCompleted`.
+  - New status state **`Consolidating`** (SPEC-016 FR-004); status lifecycle becomes
+    `Uploaded → Processing → Consolidating → Completed | Failed`.
+  - Move the terminal `Completed` write **out of** `enrich_with_llm` (it currently
+    writes `Completed`/`Failed` directly) so `enrich_with_llm` writes `Consolidating`
+    on accept, and the **post-consolidation step writes `Completed`**. `Failed` paths
+    are unchanged.
+  - Reconcile the `consolidate_gold` invocation contract with the **single-document**
+    state machine: the existing handler requires `batch_id` + `expected_documents`
+    (a batch finalizer shape). Per-execution, derive a single-document batch
+    (e.g. `batch_id = execution_id`, `expected_documents = [{run_id, document_id}]`)
+    so one Lambda serves both the smoke finalizer and the inline path (NFR-001:
+    no new consolidation Lambda).
+  - IAM: grant the **Step Functions role** permission to invoke `consolidate_gold_lambda`
+    (today the state machine role only invokes validate/extract/enrich/publish);
+    grant `consolidate_gold_role` the `status/` write permission used by `_write_status`.
+  - Idempotency (FR-006): rely on existing Gold dedup markers in `gold_model.py`;
+    re-running a single-document batch must not duplicate rows.
+  - Failure isolation (FR-003): a `ConsolidateGold` failure must not corrupt prior
+    Gold; on failure, route to a status write of `Failed` (or retain `Consolidating`)
+    without a partial Gold write — the existing `incomplete` short-circuit already
+    avoids partial writes when a document lacks a terminal state.
+- **Files:** `infra/envs/dev/state_machine.asl.json` (new states), `infra/envs/dev/main.tf`
+  (state machine `templatefile` gains `consolidate_gold_lambda_arn`; SFN role IAM;
+  `consolidate_gold_role` status-write policy), `src/aws/lambda_handlers/control_plane.py`
+  (status-state changes + single-document batch shaping), `specs/technical/SPEC-016-automated-gold.md`
+  (already authored). No frontend changes.
+- **AWS services:** Step Functions, Lambda, S3, Glue, Athena (all existing; NFR-001/002/003).
+- **Risks:**
+  - **Changes deployed runtime behavior** (state machine definition + status semantics
+    + SFN IAM) → **requires explicit approval before `terraform apply`** per `AGENTS.md`.
+  - Latency: per-invoice Gold consolidation adds a Step Functions step + a pandas/pyarrow
+    Lambda invocation to every document (the consolidate Lambda is the *fat* bundle,
+    not the slim chat one) — watch cold starts and the AWS Budget.
+  - Single-document `batch_id=<execution_id>` produces many small Parquet batches in
+    `gold/documents/batch_id=*/` — acceptable for MVP2; cross-batch compaction is
+    explicitly **out of scope** (SPEC-016 Out of Scope).
+  - The `gold_invoice_summary` view (Phase 2) reads `gold_documents`; verify partitions
+    are discoverable (run `MSCK REPAIR` / partition projection) so newly written
+    `batch_id` partitions are visible to Athena without manual `repair-partitions`.
+- **Dependencies:** Phase 2 (Gold/summary schema), Phase 3 (status store + `Processing`
+  write), Phase 4 (chat API consumes the now-fresh Gold). Must land **before** Phase 5
+  so the portal's `Completed` status is truthful (SPEC-016 AC-004).
+- **Effort:** M.
+- **Acceptance (SPEC-016):** AC-001..AC-004 — a freshly uploaded PDF reaches Gold with
+  no manual `consolidate_gold` call, and the chatbot can query it once status is `Completed`.
+
 ### Phase 5 — Frontend Portal + Chat UI (SPEC-010 + SPEC-013) & Hardening
 - **Objective:** User-facing portal: upload, status, history, chat. Plus docs/hardening.
 - **Deliverables:** `frontend/` SPA (upload w/ progress, status table, history, chat w/ history+loading+table formatting); S3+CloudFront+OAC; Terraform deploy; (auth if chosen); updated `README.md`/architecture diagram; alarms/retry/cost review.
@@ -374,6 +431,20 @@ to complete the MVP2 user journey.
   - Task: Structured analytics logging (`query_id`,`user_question`,`generated_sql`,`execution_time_ms`,`athena_scan_mb`,`status`).
   - Task: Bundle hygiene (exclude pandas from chat Lambda path); latency check vs NFR-001.
 
+### Epic: Automated Gold Consolidation (SPEC-016) — Phase 4.5
+- **Feature: State machine integration**
+  - Task: Add `ConsolidateGold` state after `PublishRunMetrics` invoking `consolidate_gold_lambda`.
+  - Task: Pass `consolidate_gold_lambda_arn` into the `templatefile` and grant the SFN role `lambda:InvokeFunction` on it.
+  - Task: Shape a single-document batch (`batch_id=<execution_id>`, `expected_documents=[{run_id, document_id}]`) for the inline path.
+- **Feature: Status synchronization (FR-004)**
+  - Task: Change `enrich_with_llm` to write `Consolidating` (not `Completed`) on accept; keep `Failed` path.
+  - Task: Add `UpdateStatusCompleted` step (writes `Completed` post-consolidation); grant `consolidate_gold_role` (or a small status writer) the `status/` write permission.
+- **Feature: Correctness guarantees**
+  - Task: Verify idempotency via existing dedup markers (FR-006); no duplicate Gold rows on re-run.
+  - Task: Verify failure isolation (FR-003): a consolidation failure leaves prior Gold intact, no partial write.
+  - Task: Ensure new `batch_id` partitions are discoverable in Athena (partition projection or `repair-partitions`) so `gold_invoice_summary` sees fresh rows.
+  - Task: E2E (AC-004): upload PDF → Processing → Consolidating → Completed → chatbot query returns the invoice.
+
 ### Epic: Static Web Portal & Chat UI (SPEC-010/013)
 - **Feature: Hosting**
   - Task: Private S3 site bucket + CloudFront + OAC (HTTPS only).
@@ -404,7 +475,9 @@ to complete the MVP2 user journey.
 | R7 | Lambda bundle bloat (pandas in chat path) → cold starts/size | Med | Low–Med | Keep query path pandas-free; consider separate bundle/layer. |
 | R8 | Presigned URL/CORS misconfig blocks uploads | Med | Med | Constrain TTL/content-type/key; test CORS end-to-end. |
 | R9 | SPEC-008 deferral vs SPEC-011 API expectation | Low | Low | Documented sanctioned evolution; reuse validated analytics code. |
-| R10 | Gold consolidation is manual → uploads don't appear in analytics | Med | Med | Plan automatic batch finalization (out of strict spec scope; flag for product). |
+| R10 | Gold consolidation is manual → uploads don't appear in analytics | Med | Med | **Resolved by Phase 4.5 / SPEC-016**: wire `consolidate_gold` into the state machine after `PublishRunMetrics`; add `Consolidating` status; `Completed` written only post-consolidation. |
+| R11 | Per-invoice inline consolidation adds latency + many small Gold batches | Med | Low–Med | Single-document `batch_id=<execution_id>`; rely on dedup markers (FR-006); cross-batch compaction out of scope; monitor Budget + cold starts (fat consolidate bundle). |
+| R12 | SFN definition + status-semantics change is deployed-runtime behavior | Med | Med | Phase 4.5 is **not** purely additive — requires explicit approval before `apply`; verify state machine diff and a single-document e2e before rollout. |
 
 ---
 
@@ -416,12 +489,15 @@ to complete the MVP2 user journey.
 3. **Phase 2 — Semantic Dataset** (clean schema before grounding chat).
 4. **Phase 3 — Upload API** (reuses existing trigger; low backend churn).
 5. **Phase 4 — Chat API** (wraps existing analytics + NL summary).
-6. **Phase 5 — Frontend + Chat UI + Hardening** (consumes the two APIs).
+6. **Phase 4.5 — Automated Gold Consolidation** (SPEC-016; wire `consolidate_gold` into the state machine so `Completed` ⇒ queryable).
+7. **Phase 5 — Frontend + Chat UI + Hardening** (consumes the two APIs).
 
 ### 8.2 Critical path
-`Phase 0 → Phase 1 → (Phase 2 ∥ Phase 3) → Phase 4 → Phase 5`
-Phases 2 and 3 can run in parallel after the backend is stable. Phase 5 cannot
-start until both APIs (3 & 4) exist. MVP2 acceptance gate = Phase 5 complete.
+`Phase 0 → Phase 1 → (Phase 2 ∥ Phase 3) → Phase 4 → Phase 4.5 → Phase 5`
+Phases 2 and 3 can run in parallel after the backend is stable. Phase 4.5 closes the
+analytics-availability loop (SPEC-016) and must precede Phase 5 so the portal's
+`Completed` status is truthful. Phase 5 cannot start until both APIs (3 & 4) exist.
+MVP2 acceptance gate = Phase 5 complete.
 
 ### 8.3 Potential blockers
 - Undecided **auth model** (blocks Phase 5 + influences Phase 3/4 IAM).

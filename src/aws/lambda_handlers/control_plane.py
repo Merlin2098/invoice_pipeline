@@ -273,6 +273,19 @@ def validate_input(event: dict[str, Any], _context: Any = None) -> dict[str, Any
         "source_file_name": source_file_name,
         "created_at": event.get("created_at"),
     }
+
+    data_lake_bucket = os.getenv("DATA_LAKE_BUCKET")
+    if data_lake_bucket and result["valid"] and document_id:
+        try:
+            _write_status(
+                S3JsonStore(data_lake_bucket),
+                invoice_id=document_id,
+                run_id=str(event.get("run_id") or ""),
+                status="Processing",
+            )
+        except Exception:
+            pass  # status write is best-effort; never fail the pipeline
+
     logger.info(
         {
             "message": "Input validation completed",
@@ -661,6 +674,21 @@ def enrich_with_llm(event: dict[str, Any], _context: Any = None) -> dict[str, An
         request=request,
     )
     result["execution_id"] = execution_id
+
+    # Accepted documents proceed to ConsolidateGold in the state machine, which
+    # writes the final Completed status. Rejected/failed paths skip consolidation
+    # and remain terminal here.
+    terminal_status = "Consolidating" if result["processing_status"] in ("accepted",) else "Failed"
+    try:
+        _write_status(
+            object_store,
+            invoice_id=str(silver_document.get("document_id") or document_id),
+            run_id=request.run_id,
+            status=terminal_status,
+        )
+    except Exception:
+        pass  # status write is best-effort; never fail the pipeline
+
     logger.info(
         {
             "message": "LLM enrichment completed",
@@ -702,6 +730,339 @@ def publish_run_metrics(event: dict[str, Any], _context: Any = None) -> dict[str
         "metric_count": len(metrics),
         "run_id": event.get("run_id"),
         "execution_id": event.get("execution_id"),
+    }
+
+
+STATUS_PREFIX = "status"
+_MAX_FILES_PER_UPLOAD = 10
+_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+_PRESIGN_TTL_SECONDS = 300
+
+
+def _write_status(
+    object_store: S3JsonStore,
+    *,
+    invoice_id: str,
+    run_id: str,
+    status: str,
+) -> None:
+    key = f"{STATUS_PREFIX}/{invoice_id}.json"
+    object_store.write_json(
+        key,
+        {
+            "invoice_id": invoice_id,
+            "run_id": run_id,
+            "status": status,
+            "updated_at": _utc_now_iso(),
+        },
+    )
+
+
+def generate_upload_urls(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    if isinstance(event.get("body"), str):
+        try:
+            body = json.loads(event["body"])
+        except json.JSONDecodeError:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "invalid_request", "message": "Request body is not valid JSON."}),
+            }
+    elif isinstance(event.get("body"), dict):
+        body = event["body"]
+    else:
+        body = event
+
+    files = body.get("files") or []
+    if not isinstance(files, list) or not files:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "invalid_request", "message": "files must be a non-empty array."}),
+        }
+    if len(files) > _MAX_FILES_PER_UPLOAD:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "invalid_request", "message": f"Maximum {_MAX_FILES_PER_UPLOAD} files per request."}),
+        }
+
+    for file_entry in files:
+        content_type = str(file_entry.get("content_type") or "")
+        if content_type != "application/pdf":
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "unsupported_file_type", "message": "only application/pdf is accepted."}),
+            }
+        size_bytes = file_entry.get("size_bytes")
+        if isinstance(size_bytes, (int, float)) and int(size_bytes) > _MAX_FILE_SIZE_BYTES:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "invalid_request", "message": "file size exceeds 20 MB limit."}),
+            }
+
+    boto3 = _optional_boto3()
+    if boto3 is None:
+        raise RuntimeError("boto3 is required for presigned URL generation")
+
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    raw_prefix = _env("RAW_PREFIX", "raw")
+    run_id = _fallback_run_id()
+    s3_client = boto3.client("s3")
+    object_store = S3JsonStore(data_lake_bucket)
+
+    uploads = []
+    for file_entry in files:
+        file_name = str(file_entry.get("name") or "")
+        invoice_id = Path(file_name).stem
+        key = f"{raw_prefix}/run_id={run_id}/{file_name}"
+        upload_url = s3_client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": data_lake_bucket,
+                "Key": key,
+                "ContentType": "application/pdf",
+            },
+            ExpiresIn=_PRESIGN_TTL_SECONDS,
+        )
+        _write_status(object_store, invoice_id=invoice_id, run_id=run_id, status="Uploaded")
+        uploads.append({
+            "name": file_name,
+            "upload_url": upload_url,
+            "key": key,
+            "expires_in_seconds": _PRESIGN_TTL_SECONDS,
+        })
+
+    get_logger("upload").bind(run_id=run_id).info({
+        "message": "Presigned upload URLs generated",
+        "status": "generated",
+        "file_count": len(uploads),
+    })
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"run_id": run_id, "uploads": uploads}),
+    }
+
+
+def get_invoice_status(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    path_parameters = event.get("pathParameters") or {}
+    invoice_id = str(path_parameters.get("invoice_id") or "").strip()
+    if not invoice_id:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "invalid_request", "message": "invoice_id is required."}),
+        }
+
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    object_store = S3JsonStore(data_lake_bucket)
+    key = f"{STATUS_PREFIX}/{invoice_id}.json"
+    try:
+        record = object_store.read_json(key)
+    except Exception as exc:
+        error_code = getattr(getattr(exc, "response", None), "get", lambda k, d=None: d)("Error", {}).get("Code", "")
+        if error_code in ("404", "NoSuchKey", "NotFound") or "NoSuchKey" in str(exc):
+            return {
+                "statusCode": 404,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "not_found", "message": "invoice not found."}),
+            }
+        raise
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(record),
+    }
+
+
+def list_invoices(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    query = event.get("queryStringParameters") or {}
+    status_filter = str(query.get("status") or "").strip() or None
+    try:
+        limit = min(int(query.get("limit") or 20), 100)
+    except (ValueError, TypeError):
+        limit = 20
+    next_token = str(query.get("next_token") or "").strip() or None
+
+    data_lake_bucket = _env("DATA_LAKE_BUCKET")
+    boto3 = _optional_boto3()
+    if boto3 is None:
+        raise RuntimeError("boto3 is required to list invoices")
+
+    s3_client = boto3.client("s3")
+    list_kwargs: dict[str, Any] = {
+        "Bucket": data_lake_bucket,
+        "Prefix": f"{STATUS_PREFIX}/",
+        "MaxKeys": limit,
+    }
+    if next_token:
+        list_kwargs["ContinuationToken"] = next_token
+
+    page = s3_client.list_objects_v2(**list_kwargs)
+    object_store = S3JsonStore(data_lake_bucket)
+    invoices = []
+    for item in page.get("Contents") or []:
+        key = str(item.get("Key") or "")
+        if not key.endswith(".json"):
+            continue
+        try:
+            record = object_store.read_json(key)
+        except Exception:
+            continue
+        if status_filter and record.get("status") != status_filter:
+            continue
+        invoices.append(record)
+
+    response_next_token = None
+    if page.get("IsTruncated"):
+        response_next_token = page.get("NextContinuationToken")
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"invoices": invoices, "next_token": response_next_token}),
+    }
+
+
+_MAX_QUESTION_CHARS = 500
+_CHAT_RESULT_ROW_CAP = 50
+_SUMMARIZATION_MAX_TOKENS = 512
+
+
+def _summarize_results(
+    bedrock_client: Any,
+    model_id: str,
+    question: str,
+    sql: str,
+    rows: list[dict[str, Any]],
+) -> str:
+    rows_text = json.dumps(rows[:_CHAT_RESULT_ROW_CAP], ensure_ascii=False)
+    user_message = (
+        f"The user asked: {question}\n\n"
+        f"The SQL executed was:\n{sql}\n\n"
+        f"The Athena result rows (up to {_CHAT_RESULT_ROW_CAP}):\n{rows_text}\n\n"
+        "Write a concise business-friendly answer in one or two sentences. "
+        "Include relevant numbers and currency if present. "
+        "Do not mention SQL or technical details."
+    )
+    response = bedrock_client.converse(
+        modelId=model_id,
+        system=[{"text": "You are a helpful analytics assistant that summarizes data query results in plain business language."}],
+        messages=[{"role": "user", "content": [{"text": user_message}]}],
+        inferenceConfig={"maxTokens": _SUMMARIZATION_MAX_TOKENS, "temperature": 0},
+    )
+    return str(response["output"]["message"]["content"][0]["text"]).strip()
+
+
+def chat(event: dict[str, Any], _context: Any = None) -> dict[str, Any]:
+    from src.analytics.bedrock_sql import BedrockSqlGenerator
+    from src.analytics.athena_client import AthenaClient
+    from src.analytics.sql_validator import SqlValidationError
+
+    body: dict[str, Any] = {}
+    if isinstance(event.get("body"), str):
+        try:
+            body = json.loads(event["body"])
+        except json.JSONDecodeError:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "invalid_request", "message": "Request body is not valid JSON."}),
+            }
+    elif isinstance(event.get("body"), dict):
+        body = event["body"]
+    else:
+        body = event
+
+    question = str(body.get("question") or "").strip()
+    if not question:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "invalid_request", "message": "question is required."}),
+        }
+    if len(question) > _MAX_QUESTION_CHARS:
+        return {
+            "statusCode": 422,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "invalid_request", "message": f"question must be {_MAX_QUESTION_CHARS} characters or less."}),
+        }
+
+    model_id = _env("BEDROCK_MODEL_ID")
+    database = _env("GLUE_DATABASE", "invoice_pipeline_gold")
+    athena_output = f"s3://{_env('DATA_LAKE_BUCKET')}/athena-results/"
+    workgroup = _env("ATHENA_WORKGROUP")
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+
+    boto3 = _optional_boto3()
+    if boto3 is None:
+        raise RuntimeError("boto3 is required for the chat handler")
+
+    bedrock_client = boto3.client("bedrock-runtime", region_name=aws_region)
+    logger = get_logger("chat").bind(user_question=question[:200])
+
+    try:
+        sql_generator = BedrockSqlGenerator(model_id=model_id, region=aws_region, client=bedrock_client)
+        validated_sql = sql_generator.generate_sql(question)
+    except SqlValidationError as exc:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "sql_validation_error", "message": str(exc)}),
+        }
+
+    athena = AthenaClient(
+        database=database,
+        output_location=athena_output,
+        workgroup=workgroup,
+        region=aws_region,
+        poll_seconds=1.0,
+        timeout_seconds=55.0,
+    )
+
+    try:
+        result = athena.execute_validated_sql(validated_sql)
+    except TimeoutError:
+        return {
+            "statusCode": 504,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "timeout", "message": "query did not complete within the time limit."}),
+        }
+
+    answer = _summarize_results(
+        bedrock_client=bedrock_client,
+        model_id=model_id,
+        question=question,
+        sql=result.sql,
+        rows=result.rows,
+    )
+
+    logger.info({
+        "message": "Chat query completed",
+        "status": result.status,
+        "query_id": result.query_id,
+        "user_question": question[:200],
+        "generated_sql": result.sql,
+        "execution_time_ms": result.execution_time_ms,
+        "athena_scan_mb": result.athena_scan_mb,
+    })
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "answer": answer,
+            "generated_sql": result.sql,
+            "rows": result.rows,
+            "query_id": result.query_id,
+            "execution_time_ms": result.execution_time_ms,
+            "athena_scan_mb": result.athena_scan_mb,
+        }),
     }
 
 
@@ -910,4 +1271,17 @@ def consolidate_gold(event: dict[str, Any], _context: Any = None) -> dict[str, A
             "gold_row_count": manifest["gold_row_count"],
         }
     )
+
+    if event.get("write_completed_status"):
+        for document in expected_documents:
+            try:
+                _write_status(
+                    object_store,
+                    invoice_id=document["document_id"],
+                    run_id=document["run_id"],
+                    status="Completed",
+                )
+            except Exception:
+                pass  # best-effort; consolidation already succeeded
+
     return manifest

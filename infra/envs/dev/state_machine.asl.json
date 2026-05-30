@@ -98,6 +98,45 @@
         }
       },
       "ResultPath": "$.metrics",
+      "Next": "ProcessingAccepted?"
+    },
+    "ProcessingAccepted?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.processing.Payload.processing_status",
+          "StringEquals": "accepted",
+          "Next": "ConsolidateGold"
+        }
+      ],
+      "Default": "PipelineCompleted"
+    },
+    "ConsolidateGold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${consolidate_gold_lambda_arn}",
+        "Payload": {
+          "batch_id.$": "$$.Execution.Name",
+          "expected_documents": [
+            {
+              "run_id.$": "$.processing.Payload.run_id",
+              "document_id.$": "$.processing.Payload.document_id",
+              "source_s3_key.$": "$.processing.Payload.source_s3_key",
+              "source_file_name.$": "$.processing.Payload.source_file_name"
+            }
+          ],
+          "write_completed_status": true
+        }
+      },
+      "ResultPath": "$.consolidation",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.consolidation_error",
+          "Next": "PipelineCompleted"
+        }
+      ],
       "Next": "PipelineCompleted"
     },
     "PipelineCompleted": {
