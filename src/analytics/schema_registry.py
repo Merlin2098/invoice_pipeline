@@ -46,10 +46,29 @@ GOLD_DOCUMENTS = AnalyticsTable(
     partition_columns={"batch_id": "string"},
 )
 
-TABLES = {GOLD_DOCUMENTS.name: GOLD_DOCUMENTS}
+GOLD_INVOICE_SUMMARY = AnalyticsTable(
+    name="gold_invoice_summary",
+    columns={
+        "invoice_id": "string",
+        "invoice_date": "string",
+        "supplier_name": "string",
+        "currency": "string",
+        "total_amount": "double",
+        "subtotal_amount": "decimal(18,2)",
+        "tax_amount": "decimal(18,2)",
+        "document_type": "string",
+        "processing_date": "string",
+    },
+    partition_columns={},
+)
+
+TABLES = {
+    GOLD_DOCUMENTS.name: GOLD_DOCUMENTS,
+    GOLD_INVOICE_SUMMARY.name: GOLD_INVOICE_SUMMARY,
+}
 
 
-def table_schema_prompt(table_name: str = GOLD_DOCUMENTS.name) -> str:
+def table_schema_prompt(table_name: str = GOLD_INVOICE_SUMMARY.name) -> str:
     table = TABLES[table_name]
     lines = [f"Table: {table.name}", "Columns:"]
     for column_name, column_type in table.all_columns.items():

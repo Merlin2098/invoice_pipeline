@@ -1,0 +1,84 @@
+title: gold_invoice_summary
+description: >
+  Business-friendly Athena view over gold_documents (SPEC-012).
+  Exposes invoice-domain column names for conversational analytics (SPEC-011).
+  subtotal_amount and tax_amount are NULL until upstream Textract/Bedrock
+  extraction is extended to capture those fields.
+type: object
+additionalProperties: false
+
+source:
+  type: athena_view
+  backing_table: gold_documents
+  database: invoice_pipeline_gold
+
+column_mapping:
+  invoice_id:      document_id      # rename
+  invoice_date:    document_date    # rename
+  supplier_name:   vendor_name      # rename
+  currency:        currency         # direct
+  total_amount:    total_amount     # direct
+  subtotal_amount: "(NULL)"         # future — no upstream source
+  tax_amount:      "(NULL)"         # future — no upstream source
+  document_type:   document_type    # direct
+  processing_date: created_at       # rename
+
+properties:
+  invoice_id:
+    type:
+      - string
+      - "null"
+    description: Document identifier (filename stem). Derived from gold_documents.document_id.
+
+  invoice_date:
+    type:
+      - string
+      - "null"
+    description: Date on the invoice. Derived from gold_documents.document_date.
+
+  supplier_name:
+    type:
+      - string
+      - "null"
+    description: Vendor / supplier name. Derived from gold_documents.vendor_name.
+
+  currency:
+    type:
+      - string
+      - "null"
+    description: ISO 4217 currency code.
+
+  total_amount:
+    type:
+      - number
+      - "null"
+    description: Invoice total amount.
+
+  subtotal_amount:
+    type:
+      - number
+      - "null"
+    description: >
+      Pre-tax subtotal. Currently NULL — not captured by upstream Textract/Bedrock
+      extraction. Reserved for future pipeline extension.
+
+  tax_amount:
+    type:
+      - number
+      - "null"
+    description: >
+      Tax amount. Currently NULL — not captured by upstream Textract/Bedrock
+      extraction. Reserved for future pipeline extension.
+
+  document_type:
+    type:
+      - string
+      - "null"
+    description: Document classification (e.g. INVOICE, CREDIT_NOTE).
+
+  processing_date:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: Timestamp when the Gold record was written. Derived from gold_documents.created_at.

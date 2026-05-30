@@ -1,9 +1,10 @@
 locals {
-  analytics_database_name       = "invoice_pipeline_gold"
-  analytics_gold_documents_name = "gold_documents"
-  athena_results_prefix         = "athena-results"
-  athena_workgroup_name         = local.name_prefix
-  athena_scan_limit_bytes       = 104857600
+  analytics_database_name            = "invoice_pipeline_gold"
+  analytics_gold_documents_name      = "gold_documents"
+  analytics_gold_invoice_summary_name = "gold_invoice_summary"
+  athena_results_prefix              = "athena-results"
+  athena_workgroup_name              = local.name_prefix
+  athena_scan_limit_bytes            = 104857600
 }
 
 resource "aws_glue_catalog_database" "gold" {
@@ -159,6 +160,81 @@ resource "aws_glue_catalog_table" "gold_documents" {
     columns {
       name = "duplicate_confidence"
       type = "double"
+    }
+  }
+}
+
+resource "aws_glue_catalog_table" "gold_invoice_summary" {
+  name          = local.analytics_gold_invoice_summary_name
+  database_name = aws_glue_catalog_database.gold.name
+  description   = "Business-friendly view over gold_documents with SPEC-012 column names."
+  table_type    = "VIRTUAL_VIEW"
+
+  parameters = {
+    comment    = "Presto View"
+    presto_view = "true"
+  }
+
+  # view_original_text encodes the Athena/Presto view DDL in the Glue metastore format.
+  # The /* Presto View: <base64> */ wrapper is required by Athena to recognise the table
+  # as a view. The inner JSON describes the columns and the original SQL.
+  view_original_text = "/* Presto View: ${base64encode(jsonencode({
+    originalSql = "SELECT document_id AS invoice_id, document_date AS invoice_date, vendor_name AS supplier_name, currency, total_amount, CAST(NULL AS DECIMAL(18,2)) AS subtotal_amount, CAST(NULL AS DECIMAL(18,2)) AS tax_amount, document_type, created_at AS processing_date FROM ${local.analytics_database_name}.${local.analytics_gold_documents_name}"
+    catalog     = "awsdatacatalog"
+    schema      = local.analytics_database_name
+    columns = [
+      { name = "invoice_id",       type = "varchar" },
+      { name = "invoice_date",     type = "varchar" },
+      { name = "supplier_name",    type = "varchar" },
+      { name = "currency",         type = "varchar" },
+      { name = "total_amount",     type = "double" },
+      { name = "subtotal_amount",  type = "decimal(18,2)" },
+      { name = "tax_amount",       type = "decimal(18,2)" },
+      { name = "document_type",    type = "varchar" },
+      { name = "processing_date",  type = "varchar" },
+    ]
+  }))} */"
+
+  storage_descriptor {
+    columns {
+      name = "invoice_id"
+      type = "string"
+    }
+    columns {
+      name = "invoice_date"
+      type = "string"
+    }
+    columns {
+      name = "supplier_name"
+      type = "string"
+    }
+    columns {
+      name = "currency"
+      type = "string"
+    }
+    columns {
+      name = "total_amount"
+      type = "double"
+    }
+    columns {
+      name = "subtotal_amount"
+      type = "decimal(18,2)"
+    }
+    columns {
+      name = "tax_amount"
+      type = "decimal(18,2)"
+    }
+    columns {
+      name = "document_type"
+      type = "string"
+    }
+    columns {
+      name = "processing_date"
+      type = "string"
+    }
+
+    ser_de_info {
+      serialization_library = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
     }
   }
 }

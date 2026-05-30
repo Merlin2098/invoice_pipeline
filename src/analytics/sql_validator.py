@@ -29,6 +29,7 @@ _ALLOWED_FUNCTIONS = {
     "date_parse",
     "date_trunc",
     "day",
+    "decimal",
     "distinct",
     "lower",
     "max",
