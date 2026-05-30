@@ -13,9 +13,16 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_PATH = REPO_ROOT / "artifacts" / "lambda" / "control_plane_bundle.zip"
+CHAT_ARTIFACT_PATH = REPO_ROOT / "artifacts" / "lambda" / "chat_bundle.zip"
 INCLUDE_DIRS = [REPO_ROOT / "src", REPO_ROOT / "specs"]
+CHAT_INCLUDE_DIRS = [
+    REPO_ROOT / "src" / "analytics",
+    REPO_ROOT / "src" / "aws",
+    REPO_ROOT / "specs" / "prompts",
+]
 CLOUD_REQUIREMENTS = REPO_ROOT / "requirements.cloud.txt"
 LAMBDA_REQUIREMENTS = REPO_ROOT / "requirements.lambda.txt"
+CHAT_REQUIREMENTS = REPO_ROOT / "requirements.chat.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
 VENDORED_MODULES = ("yaml", "dateutil", "six")
@@ -184,23 +191,37 @@ def add_lambda_dependencies(
         add_dependency_tree(archive, dependency_root)
 
 
+def _write_source_dirs(archive: ZipFile, include_dirs: list[Path]) -> None:
+    for directory in include_dirs:
+        for file_path in sorted(directory.rglob("*")):
+            if file_path.is_dir() and file_path.name == "__pycache__":
+                continue
+            if file_path.suffix == ".pyc":
+                continue
+            if "__pycache__" in file_path.parts:
+                continue
+            if file_path.is_file():
+                archive.write(file_path, file_path.relative_to(REPO_ROOT))
+
+
 def build_bundle(package_manager: str) -> Path:
     ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
     requirements_text = runtime_requirements_text(package_manager)
     with ZipFile(ARTIFACT_PATH, "w", compression=ZIP_DEFLATED) as archive:
-        for directory in INCLUDE_DIRS:
-            for file_path in sorted(directory.rglob("*")):
-                if file_path.is_dir() and file_path.name == "__pycache__":
-                    continue
-                if file_path.suffix == ".pyc":
-                    continue
-                if "__pycache__" in file_path.parts:
-                    continue
-                if file_path.is_file():
-                    archive.write(file_path, file_path.relative_to(REPO_ROOT))
+        _write_source_dirs(archive, INCLUDE_DIRS)
         add_lambda_dependencies(archive, requirements_text, package_manager)
         archive.writestr("requirements.txt", requirements_text)
     return ARTIFACT_PATH
+
+
+def build_chat_bundle(package_manager: str) -> Path:
+    CHAT_ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    requirements_text = CHAT_REQUIREMENTS.read_text(encoding="utf-8").strip() + "\n"
+    with ZipFile(CHAT_ARTIFACT_PATH, "w", compression=ZIP_DEFLATED) as archive:
+        _write_source_dirs(archive, CHAT_INCLUDE_DIRS)
+        add_lambda_dependencies(archive, requirements_text, package_manager)
+        archive.writestr("requirements.txt", requirements_text)
+    return CHAT_ARTIFACT_PATH
 
 
 def clean_bundle() -> None:
@@ -230,13 +251,23 @@ def main() -> None:
         default="auto",
         help="Dependency source to use for the bundled requirements.txt.",
     )
+    parser.add_argument(
+        "--target",
+        choices=("control-plane", "chat"),
+        default="control-plane",
+        help="Which bundle to build: 'control-plane' (default) or 'chat' (pandas-free slim bundle).",
+    )
     args = parser.parse_args()
 
     if args.clean:
         clean_bundle()
         return
 
-    artifact = build_bundle(detect_package_manager(args.package_manager))
+    pm = detect_package_manager(args.package_manager)
+    if args.target == "chat":
+        artifact = build_chat_bundle(pm)
+    else:
+        artifact = build_bundle(pm)
     print(artifact)
 
 
