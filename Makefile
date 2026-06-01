@@ -10,7 +10,8 @@ endif
 
 .PHONY: init uv-init uv-update uv-reset package package-chat treemap lint fmt clean ai-refresh \
         bootstrap-init bootstrap-apply \
-        tf-init tf-plan tf-apply
+        tf-init tf-plan tf-apply \
+        frontend-install build-frontend deploy-frontend
 
 init:
 	$(BOOTSTRAP_PYTHON) scripts/run_uv_sync.py init
@@ -59,3 +60,18 @@ tf-plan:
 
 tf-apply:
 	terraform -chdir=infra/envs/dev apply tfplan
+
+frontend-install:
+	cd frontend && npm install
+
+build-frontend:
+	cd frontend && npm run build
+
+deploy-frontend:
+	@if [ -z "$(SITE_BUCKET)" ]; then \
+		echo "Usage: make deploy-frontend SITE_BUCKET=<bucket> CF_DIST_ID=<id>"; exit 1; \
+	fi
+	aws s3 sync frontend/dist/ s3://$(SITE_BUCKET)/ --delete
+	@if [ -n "$(CF_DIST_ID)" ]; then \
+		aws cloudfront create-invalidation --distribution-id $(CF_DIST_ID) --paths "/*"; \
+	fi

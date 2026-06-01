@@ -2,133 +2,113 @@
 
 ## Overview
 
-Invoice Intelligence Pipeline is a cloud-first AWS data engineering project for
-invoice ingestion, OCR extraction, quality-aware routing, and analytics-ready
-Gold data products.
+Invoice Intelligence Pipeline is a complete serverless Data Product on AWS: a
+user uploads a PDF invoice through a web portal, the pipeline extracts and
+enriches it with Textract and Bedrock, consolidates it into a Gold analytics
+layer, and the user can immediately query their invoices with natural language
+and receive business-friendly answers.
 
-The MVP has been validated in AWS with Terraform-managed infrastructure,
-event-driven processing, traceable `run_id` execution, layered S3 outputs,
-CloudWatch observability, and an Athena/Glue analytics path with optional
-Bedrock-assisted natural-language SQL.
+The project demonstrates a full production-ready stack — Data Engineering,
+OCR, Lakehouse Architecture, GenAI, Conversational Analytics, and
+Infrastructure as Code (Terraform) — end to end without hiding any runtime
+behavior behind a framework.
 
 ## Business Problem
 
 Invoice operations often start with semi-structured files and end with manual
 review, inconsistent fields, and limited traceability. This project turns raw
 invoice files into inspectable data lake outputs with explicit accepted,
-rejected, and failed outcomes.
+rejected, and failed outcomes — and exposes them through a conversational
+analytics interface any non-technical user can operate.
 
-The goal is a simple, reproducible cloud pipeline that demonstrates the business
-idea without hiding infrastructure or runtime behavior behind a framework.
+## MVP2 User Journey
+
+1. Open the web portal (CloudFront HTTPS URL).
+2. Upload one or more PDF invoices via the Upload page.
+3. Watch processing status transition: `Uploaded → Processing → Consolidating → Completed`.
+4. Switch to the Chat tab and ask a natural-language question about the invoices.
+5. Receive a Bedrock-generated answer backed by a live Athena query.
 
 ## Solution Architecture
 
-The AWS MVP uses a decoupled event flow:
+```text
+Browser
+  └─ CloudFront + WAF (rate-limit)
+       ├─ S3 Static Site (React + Vite SPA)
+       └─ API Gateway HTTP API v2
+            ├─ POST /uploads  → presigned S3 PUT (raw/ prefix triggers pipeline)
+            ├─ GET  /invoices → paginated status list (S3 status/ store)
+            ├─ GET  /invoices/{id}/status
+            └─ POST /chat     → Bedrock NL→SQL → Athena → Bedrock NL answer
 
-1. A document is uploaded to `s3://<data-lake-bucket>/raw/<file>` or
-   `s3://<data-lake-bucket>/raw/run_id=<run_id>/<file>`.
-2. S3 sends the upload event to the raw ingestion SQS queue.
-3. The `raw-dispatch` Lambda consumes the SQS message, creates a `run_id` when
-   needed, and starts Step Functions.
-4. Step Functions runs `ValidateInput -> ExtractOCR -> EnrichWithLLM -> PublishRunMetrics`.
-5. The pipeline writes bronze evidence, silver outcomes, technical errors, and
-   CloudWatch metrics.
-6. Gold consolidation publishes analytics-ready Parquet snapshots for Glue,
-   Athena, and optional Bedrock natural-language querying.
+S3 raw/ → SQS → Lambda raw-dispatch → Step Functions:
+  ValidateInput → ExtractOCR (Textract) → EnrichWithLLM (Bedrock)
+    → PublishRunMetrics → ConsolidateGold → Completed status
+  Gold Parquet → Glue Catalog → Athena workgroup
+```
 
 ## Key Features
 
-- Terraform-managed AWS dev environment under `infra/envs/dev`.
-- S3 data lake prefixes for raw, bronze, silver, gold, errors, and metrics.
-- SQS buffering with DLQ routing for raw uploads.
-- Step Functions orchestration with separated validation, OCR, enrichment, and
-  metrics stages.
-- Lambda handlers for dispatch, validation, Textract extraction, Bedrock
-  enrichment, and run metrics.
-- Gold analytics layer with Glue Data Catalog, Athena workgroup, scan limits,
-  and SELECT-only SQL validation.
+- Serverless web portal (React + Vite) hosted on S3 + CloudFront + WAF.
+- HTTP upload API with presigned S3 PUT URLs; browser uploads directly to S3.
+- Per-invoice status tracking (`Uploaded → Processing → Consolidating → Completed | Failed`).
+- Automated Gold consolidation wired into Step Functions (SPEC-016) so every
+  completed invoice is immediately queryable in Athena.
+- Conversational analytics: natural-language question → Bedrock SQL generation
+  → validated Athena query → Bedrock NL answer.
+- Semantic Gold dataset (`gold_invoice_summary`) with business-friendly column
+  names for better NL→SQL accuracy (SPEC-012).
+- Remote Terraform state backend in S3 with native locking (Terraform ≥ 1.10).
+- S3 data lake prefixes for raw, bronze, silver, gold, manifests, errors, and status.
+- SQS buffering with DLQ routing and CloudWatch alarms for DLQ depth, Lambda
+  errors, and Step Functions failures.
 - Canonical contracts, quality rules, metrics, and prompts under `specs/`.
-- Explicit packaging and Terraform workflows for reproducible deployment.
+- Explicit `make` workflow for packaging, Terraform, and frontend deployment.
 
 ## Extension Features
 
-- Remote Terraform state backend in S3 with stage-level locking for safer team
-  collaboration and environment isolation.
-- Pluggable LLM model selection so the enrichment and natural-language SQL
-  stages can use different Bedrock or compatible LLM models as business needs
-  evolve.
-- Glue job replacement path for Lambda processing stages when document volume,
-  runtime, or batch size exceeds Lambda processing limits.
-- Data warehouse consolidation path for publishing curated Gold data into
-  Redshift, Snowflake, or another warehouse according to business reporting and
-  governance requirements.
+- Pluggable LLM model selection so enrichment and NL→SQL can use different
+  Bedrock models as needs evolve.
+- Glue job replacement path for Lambda stages when document volume exceeds
+  Lambda processing limits.
+- Data warehouse consolidation path for publishing Gold data into Redshift,
+  Snowflake, or another warehouse.
 
 ## Architecture Diagram
 
-![Invoice Pipeline AWS architecture](docs/resources/architecture_diagram.png)
-
-The maintainable Graphviz source is
-[`docs/resources/architecture.dot`](docs/resources/architecture.dot).
+See [`docs/resources/diagram.md`](docs/resources/diagram.md) for Mermaid
+diagrams covering the full pipeline flow, AWS service topology, and layer detail.
 
 ```text
-S3 raw/ or raw/run_id=<run_id>/
-        |
-        v
-SQS raw-ingestion ----> SQS DLQ
-        |
-        v
-Lambda raw-dispatch
-        |
-        v
-Step Functions document-pipeline
-        |
-        v
-ValidateInput
-        |
-        v
-ExtractOCR ----> Textract AnalyzeExpense
-        |                  |
-        |                  v
-        |        S3 bronze/textract-json/
-        v
-EnrichWithLLM ----> Bedrock optional normalization
-        |
-        v
-S3 silver/valid/ | silver/rejected/ | errors/
-        |
-        v
-PublishRunMetrics ----> CloudWatch Logs + Metrics
-        |
-        v
-consolidate-gold ----> S3 gold/documents/batch_id=<batch_id>/
-                   \-> S3 gold/manifests/batch_id=<batch_id>/
-                                    |
-                                    v
-                       Glue Catalog (invoice_pipeline_gold.gold_documents)
-                                    |
-                                    v
-                       Athena workgroup <----- src/analytics CLI
-                                    ^                |
-                                    |                v
-                                    +------- Bedrock NL -> SQL
+Browser → CloudFront + WAF
+               ├─ S3 Static Site (SPA)
+               └─ API Gateway v2
+                    ├─ POST /uploads → S3 raw/ → SQS → Step Functions:
+                    │       ValidateInput → ExtractOCR (Textract)
+                    │       → EnrichWithLLM (Bedrock) → PublishRunMetrics
+                    │       → ConsolidateGold → S3 gold/ → Glue → Athena
+                    ├─ GET  /invoices[/{id}/status] → S3 status/
+                    └─ POST /chat → Bedrock NL→SQL → Athena → Bedrock NL answer
 ```
 
 ## Repository Structure
 
 ```text
 ai/                 Agent guidance, skills, and context configuration
-artifacts/lambda/   Generated Lambda deployment bundle
+artifacts/lambda/   Generated Lambda deployment bundles
 docs/               Architecture notes, runbooks, deployment history, and diagrams
-infra/envs/dev/     Executable Terraform entrypoint for the AWS MVP
+frontend/           React + Vite SPA (upload, history, chat UI)
+infra/bootstrap/    One-time S3 remote-state bucket provisioning stack
+infra/envs/dev/     Executable Terraform entrypoint for the AWS dev environment
 infra/modules/      Focused reusable Terraform modules
 scripts/quality/    Ruff lint and format wrappers
 scripts/windows/    Windows setup and Makefile wrapper helpers
 specs/              Contracts, quality rules, metrics, prompts, and design specs
-src/                Python pipeline, Lambda handlers, Glue jobs, and analytics code
+src/                Python pipeline, Lambda handlers, and analytics code
 ```
 
-The older `infra/` root stack is kept as a transition baseline. New AWS MVP
-work should use `infra/envs/dev`.
+The older `infra/` root stack is kept as a transition baseline. New work
+targets `infra/envs/dev`.
 
 ## Data Lake Layers
 

@@ -221,3 +221,9 @@ variable "chat_lambda_timeout_seconds" {
   type        = number
   default     = 60
 }
+
+variable "waf_rate_limit" {
+  description = "Maximum requests per 5-minute window per IP before WAF blocks. Protects Bedrock/Athena spend."
+  type        = number
+  default     = 300
+}

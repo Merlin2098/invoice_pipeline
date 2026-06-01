@@ -8,20 +8,43 @@ This document shows the current invoice pipeline architecture diagram, both as a
 
 ```mermaid
 flowchart LR
-    A["Raw Document Upload"] --> B["validate-input"]
+    A["Browser / Portal"] --> UP["Upload API<br/>POST /uploads"]
+    UP --> B["validate-input"]
     B --> C["extract-ocr<br/>Textract AnalyzeExpense"]
     C --> D["enrich-llm<br/>optional Bedrock"]
     D --> E["Silver Documents<br/>valid | rejected"]
-    E --> F["consolidate-gold"]
+    E --> F["consolidate-gold<br/>(inline — SPEC-016)"]
     F --> G["Gold Parquet Dataset"]
     G --> H["Glue Catalog / Athena"]
+    H --> CH["Chat API<br/>POST /chat"]
+    CH --> A
 ```
 
 ## 2. Current AWS Architecture
 
 ```mermaid
 flowchart TB
-    U["Source Document Upload<br/>PDF / TIFF / PNG / JPG"] --> S3R["S3 Data Lake Bucket<br/>raw/run_id=&lt;run_id&gt;/"]
+    USR["User Browser"] --> CF["CloudFront + WAF<br/>HTTPS / rate-limit"]
+    CF --> S3SITE["S3 Static Site Bucket<br/>React + Vite SPA"]
+    CF --> APIGW["API Gateway HTTP API v2"]
+
+    APIGW --> UPL["Lambda upload<br/>POST /uploads"]
+    APIGW --> STAT["Lambda invoice-status<br/>GET /invoices/{id}/status"]
+    APIGW --> LIST["Lambda list-invoices<br/>GET /invoices"]
+    APIGW --> CHAT["Lambda chat<br/>POST /chat"]
+
+    UPL --> S3R["S3 Data Lake Bucket<br/>raw/run_id=&lt;run_id&gt;/"]
+    UPL --> S3ST["S3 Data Lake Bucket<br/>status/"]
+    STAT --> S3ST
+    LIST --> S3ST
+
+    CHAT --> BSQ["Amazon Bedrock<br/>NL → SQL generation"]
+    CHAT --> ATH["Amazon Athena<br/>workgroup invoice-pipeline-dev"]
+    CHAT --> BR2["Amazon Bedrock<br/>result summarization"]
+    ATH --> S3AR["S3 Data Lake Bucket<br/>athena-results/"]
+    ATH --> GC["Glue Data Catalog<br/>gold_documents · gold_invoice_summary"]
+
+    U["Source Document Upload<br/>PDF / TIFF / PNG / JPG"] --> S3R
     S3R --> EV["S3 Object Created Event"]
     EV --> SQS["SQS Queue<br/>raw-ingestion"]
     SQS --> DLQ["SQS DLQ<br/>maxReceiveCount=3"]
@@ -49,11 +72,7 @@ flowchart TB
     GC --> ATH["Amazon Athena<br/>workgroup invoice-pipeline-dev"]
     ATH --> S3AR["S3 Data Lake Bucket<br/>athena-results/"]
 
-    CLI["src/analytics CLI<br/>ask | sql | repair-partitions"] --> BSQ["Amazon Bedrock<br/>NL question -> Athena SQL"]
-    BSQ --> CLI
-    CLI --> ATH
-
-    CW["CloudWatch Logs + Metrics"] --> SF
+    CW["CloudWatch Logs + Metrics + Alarms"] --> SF
     CW --> RD
     CW --> L1
     CW --> L2
@@ -126,12 +145,12 @@ This reflects the separation of responsibilities in the project:
 
 ## 6. Summary
 
-The current invoice pipeline architecture combines:
+The invoice pipeline architecture combines:
 
-- a clear `medallion` flow extended with `errors/` and an analytics layer
-- local execution for regression testing
-- AWS execution modeled with `S3 + SQS + Lambda + Step Functions + Textract + Bedrock`
-- analytical consumption with `Glue Catalog + Athena + Bedrock NL -> SQL`
-- security and observability with `IAM + CloudWatch + AWS Budgets`
+- a clear `medallion` flow (Raw → Bronze → Silver → Gold) extended with `errors/` and inline Gold consolidation (SPEC-016)
+- a serverless web portal (React + Vite on S3 + CloudFront + WAF) as the user-facing entry point
+- HTTP API layer (API Gateway v2 + Lambda) for upload, status, history, and conversational analytics
+- analytical consumption with `Glue Catalog + Athena + Bedrock NL → SQL + NL result summarization`
+- security and observability with `IAM + CloudWatch Alarms + AWS Budgets + WAF rate-limiting`
 
-The diagram represents the target architecture currently implemented in code and IaC. The AWS path has been validated end to end with S3, SQS, Lambda, Step Functions, Textract extraction, Bedrock enrichment, Silver routing, Gold Parquet consolidation, Glue partition repair, Athena SQL, and Bedrock natural-language querying over a live Gold batch.
+The diagram represents the target architecture implemented in code and IaC across Phases 0–5. MVP2 acceptance criteria (open portal → upload PDF → pipeline runs → NL query → NL answer) are fully covered.

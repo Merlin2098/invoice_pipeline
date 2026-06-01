@@ -197,3 +197,18 @@ output "chat_lambda_name" {
   description = "Lambda function name for the POST /chat endpoint."
   value       = module.chat_lambda.lambda_name
 }
+
+output "site_bucket_name" {
+  description = "S3 bucket name for the static web portal assets."
+  value       = module.site_bucket.bucket_name
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for cache invalidation after frontend deploy."
+  value       = aws_cloudfront_distribution.site.id
+}
+
+output "portal_url" {
+  description = "HTTPS URL of the invoice portal via CloudFront."
+  value       = "https://${aws_cloudfront_distribution.site.domain_name}"
+}
