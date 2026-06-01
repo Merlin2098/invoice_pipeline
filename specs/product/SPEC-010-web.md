@@ -12,7 +12,7 @@ The web application will serve as the primary entry point for the Data Product a
 
 Enable non-technical users to:
 
-* Upload invoice PDFs through a browser.
+* Upload invoice PDF or TIFF/TIF documents through a browser.
 * Track processing status.
 * Access invoice analytics through a conversational interface.
 
@@ -53,11 +53,12 @@ S3 Raw Bucket     Bedrock Query Layer
 
 ### FR-001 - Invoice Upload
 
-The system shall allow users to upload one or multiple PDF invoices.
+The system shall allow users to upload one or multiple invoice documents.
 
 Accepted formats:
 
 * PDF
+* TIFF/TIF
 
 Maximum file size:
 
@@ -72,8 +73,8 @@ The system shall display upload progress for each document.
 Example:
 
 invoice_001.pdf     Uploading... 75%
-invoice_002.pdf     Completed
-invoice_003.pdf     Failed
+invoice_002.tif     Completed
+invoice_003.tiff    Failed
 
 
 ### FR-003 - Processing Status

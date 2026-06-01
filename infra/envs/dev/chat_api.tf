@@ -61,8 +61,8 @@ data "aws_iam_policy_document" "chat_s3" {
   }
 
   statement {
-    sid     = "ListGoldAndResults"
-    actions = ["s3:ListBucket"]
+    sid       = "ListGoldAndResults"
+    actions   = ["s3:ListBucket"]
     resources = [module.data_lake_bucket.bucket_arn]
     condition {
       test     = "StringLike"
@@ -122,12 +122,12 @@ module "chat_lambda_role" {
 module "chat_bedrock_permissions" {
   source = "../../modules/bedrock_permissions"
 
-  name       = "${local.name_prefix}-chat-bedrock"
-  aws_region = var.aws_region
-  account_id = data.aws_caller_identity.current.account_id
-  model_id   = var.bedrock_model_id
+  name                 = "${local.name_prefix}-chat-bedrock"
+  aws_region           = var.aws_region
+  account_id           = data.aws_caller_identity.current.account_id
+  model_id             = var.bedrock_model_id
   attach_to_role_names = [module.chat_lambda_role.role_name]
-  tags       = local.common_tags
+  tags                 = local.common_tags
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -143,16 +143,15 @@ module "chat_lambda" {
   s3_key           = var.chat_lambda_package_s3_key
   source_code_hash = filebase64sha256("${path.root}/../../../artifacts/lambda/chat_bundle.zip")
   runtime          = var.lambda_runtime
-  handler          = "src.aws.lambda_handlers.control_plane.chat"
+  handler          = "src.aws.lambda_handlers.chat_api.chat"
   timeout          = var.chat_lambda_timeout_seconds
   memory_size      = var.lambda_memory_size
   log_group_name   = module.chat_lambda_log_group.name
   environment_variables = {
-    DATA_LAKE_BUCKET  = module.data_lake_bucket.bucket_name
-    BEDROCK_MODEL_ID  = var.bedrock_model_id
-    GLUE_DATABASE     = local.analytics_database_name
-    ATHENA_WORKGROUP  = local.athena_workgroup_name
-    AWS_REGION        = var.aws_region
+    DATA_LAKE_BUCKET = module.data_lake_bucket.bucket_name
+    BEDROCK_MODEL_ID = var.bedrock_model_id
+    GLUE_DATABASE    = local.analytics_database_name
+    ATHENA_WORKGROUP = local.athena_workgroup_name
   }
   tags = local.common_tags
 }

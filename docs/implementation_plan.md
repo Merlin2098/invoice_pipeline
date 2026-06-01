@@ -119,7 +119,7 @@ Per `README.md` and `AGENTS.md`:
 - **SPEC-008 vs SPEC-011/013:** SPEC-008 **intentionally defers** API Gateway / public query endpoints ("A Lambda/API Gateway interface is intentionally deferred", "Excluded: API Gateway or public query endpoints"). SPEC-011/013 now **require** that deferred API. This is an explicit, sanctioned evolution — not a contradiction — but the analytics code was written for a CLI, not an HTTP handler.
 - **SPEC-011 FR-005 (NL response):** the current CLI does **not** convert results back to natural language. This is a genuine missing capability, not just a transport change.
 - **SPEC-012 column model:** `gold_invoice_summary` columns (`supplier_name`, `subtotal_amount`, `tax_amount`, `total_amount`, `document_type`, `processing_date`, `currency`, `invoice_id`, `invoice_date`) differ from `gold_documents` (`vendor_name`, `total_amount`, `document_date`, `document_id`, `created_at`, no `subtotal_amount`/`tax_amount`). **Source data for `subtotal_amount`/`tax_amount` is not currently captured** in Silver/Gold — see Gap Analysis.
-- **SPEC-010 file constraint:** PDF only, ≤ 20 MB. Current pipeline trigger suffix is configurable (`raw_trigger_suffix`, default null) and the validator's supported extensions come from `src/config/pipeline.yaml` (`ocr.supported_extensions`) — ✅ **`.pdf` is confirmed in `supported_extensions`** (Phase 0 verification).
+- **SPEC-010 demo file constraint:** PDF or TIFF/TIF, ≤ 20 MB. Current pipeline trigger suffix is configurable (`raw_trigger_suffix`, default null) and the validator's supported extensions come from `src/config/pipeline.yaml` (`ocr.supported_extensions`) — ✅ **`.pdf`, `.tif`, and `.tiff` are confirmed in `supported_extensions`**.
 - **SPEC-014/007 backend:** SPEC-007 example uses bucket `invoice-pipeline-dev-tfstate` and **no DynamoDB**; `backend.tf.example` **does** specify a DynamoDB lock table. Reconcile (DynamoDB locking is recommended and satisfies NFR-002).
 
 ---
@@ -207,7 +207,7 @@ Per `README.md` and `AGENTS.md`:
 - New top-level `frontend/` app (static SPA; framework TBD — see §4.6). Keep it separate from `src/` Python per `AGENTS.md` separation rule.
 
 ### 4.2 Upload API (SPEC-010 FR-001/002)
-- **API Gateway (HTTP API v2)** → **upload Lambda** that returns an **S3 presigned PUT URL** scoped to `raw/run_id=<run_id>/<file>.pdf`. Browser uploads directly to S3 (keeps payloads off Lambda/API GW; respects 20 MB limit cleanly).
+- **API Gateway (HTTP API v2)** → **upload Lambda** that returns an **S3 presigned PUT URL** scoped to `raw/run_id=<run_id>/<file>`. Demo-supported file types are PDF and TIFF/TIF. Browser uploads directly to S3 (keeps payloads off Lambda/API GW; respects 20 MB limit cleanly).
 - Reuse the **existing S3→SQX→Step Functions trigger** unchanged — presigned upload lands in `raw/` and the pipeline fires automatically. **Minimal backend refactor.**
 - Add a least-privilege role for the upload Lambda: `s3:PutObject` on `raw/*` only (presign does not require broad perms; the *caller's* presigned URL inherits the Lambda role's permission to that key).
 
@@ -238,7 +238,7 @@ Per `README.md` and `AGENTS.md`:
 Full contracts are defined in [`specs/technical/SPEC-015-api-contracts.md`](../specs/technical/SPEC-015-api-contracts.md) (Phase 0 deliverable).
 
 Summary:
-- `POST /uploads` → presigned S3 PUT URLs scoped to `raw/run_id=<id>/<file>.pdf`.
+- `POST /uploads` → presigned S3 PUT URLs scoped to `raw/run_id=<id>/<file>` for PDF and TIFF/TIF demo files.
 - `GET /invoices` → paginated invoice history.
 - `GET /invoices/{id}/status` → `{ status: Uploaded|Processing|Completed|Failed }`.
 - `POST /chat` → `{ answer, generated_sql, rows, query_id, execution_time_ms, athena_scan_mb }`.
@@ -279,7 +279,7 @@ portal's `Completed` status is truthful for the MVP2 user journey.
   - [`specs/technical/SPEC-015-api-contracts.md`](../specs/technical/SPEC-015-api-contracts.md) — full HTTP API contracts for upload, status, history, and chat endpoints.
   - [`docs/adr/ADR-001-phase0-decisions.md`](adr/ADR-001-phase0-decisions.md) — verified findings (V1–V5) and open decisions (D1–D5) with recommendations.
 - **Verified findings:**
-  - ✅ V1: `.pdf` confirmed in `src/config/pipeline.yaml` `ocr.supported_extensions`.
+  - ✅ V1: `.pdf`, `.tif`, and `.tiff` confirmed in `src/config/pipeline.yaml` `ocr.supported_extensions`.
   - ✅ V2: `src/analytics` confirmed included in Lambda bundle (`INCLUDE_DIRS = [src/, specs/]`).
   - ⚠️ V3: `pandas`/`pyarrow` in `requirements.lambda.txt` (~120 MB); chat Lambda needs separate slim bundle (D3).
   - ⚠️ V4: `subtotal_amount`/`tax_amount` confirmed absent from Silver schema and Gold model (D4).
@@ -412,11 +412,11 @@ portal's `Completed` status is truthful for the MVP2 user journey.
 
 ### Epic: Upload API (SPEC-010 backend)
 - **Feature: Presigned upload**
-  - Task: Upload Lambda handler returning presigned PUT (key `raw/run_id=<id>/<file>.pdf`).
+  - Task: Upload Lambda handler returning presigned PUT (key `raw/run_id=<id>/<file>`) for PDF and TIFF/TIF demo files.
   - Task: IAM role (`s3:PutObject` on `raw/*`).
   - Task: API Gateway `POST /uploads` + CORS.
   - Task: Terraform wiring; packaging update.
-  - Task: Confirm `.pdf` in `ocr.supported_extensions`; e2e: upload → pipeline → Silver.
+  - Task: Confirm `.pdf`, `.tif`, and `.tiff` in `ocr.supported_extensions`; e2e: upload → pipeline → Silver.
 - **Feature: Status & history**
   - Task: Choose store (DynamoDB recommended).
   - Task: Emit status from existing Lambdas (Uploaded/Processing/Completed/Failed).

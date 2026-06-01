@@ -1,10 +1,10 @@
 locals {
-  analytics_database_name            = "invoice_pipeline_gold"
-  analytics_gold_documents_name      = "gold_documents"
+  analytics_database_name             = "invoice_pipeline_gold"
+  analytics_gold_documents_name       = "gold_documents"
   analytics_gold_invoice_summary_name = "gold_invoice_summary"
-  athena_results_prefix              = "athena-results"
-  athena_workgroup_name              = local.name_prefix
-  athena_scan_limit_bytes            = 104857600
+  athena_results_prefix               = "athena-results"
+  athena_workgroup_name               = local.name_prefix
+  athena_scan_limit_bytes             = 104857600
 }
 
 resource "aws_glue_catalog_database" "gold" {
@@ -171,7 +171,7 @@ resource "aws_glue_catalog_table" "gold_invoice_summary" {
   table_type    = "VIRTUAL_VIEW"
 
   parameters = {
-    comment    = "Presto View"
+    comment     = "Presto View"
     presto_view = "true"
   }
 
@@ -183,15 +183,15 @@ resource "aws_glue_catalog_table" "gold_invoice_summary" {
     catalog     = "awsdatacatalog"
     schema      = local.analytics_database_name
     columns = [
-      { name = "invoice_id",       type = "varchar" },
-      { name = "invoice_date",     type = "varchar" },
-      { name = "supplier_name",    type = "varchar" },
-      { name = "currency",         type = "varchar" },
-      { name = "total_amount",     type = "double" },
-      { name = "subtotal_amount",  type = "decimal(18,2)" },
-      { name = "tax_amount",       type = "decimal(18,2)" },
-      { name = "document_type",    type = "varchar" },
-      { name = "processing_date",  type = "varchar" },
+      { name = "invoice_id", type = "varchar" },
+      { name = "invoice_date", type = "varchar" },
+      { name = "supplier_name", type = "varchar" },
+      { name = "currency", type = "varchar" },
+      { name = "total_amount", type = "double" },
+      { name = "subtotal_amount", type = "decimal(18,2)" },
+      { name = "tax_amount", type = "decimal(18,2)" },
+      { name = "document_type", type = "varchar" },
+      { name = "processing_date", type = "varchar" },
     ]
   }))} */"
 

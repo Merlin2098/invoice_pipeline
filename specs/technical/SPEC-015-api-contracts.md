@@ -65,7 +65,7 @@ Generate presigned S3 PUT URLs for one or more invoice files.
 {
   "files": [
     { "name": "invoice_001.pdf", "content_type": "application/pdf", "size_bytes": 1048576 },
-    { "name": "invoice_002.pdf", "content_type": "application/pdf", "size_bytes": 2097152 }
+    { "name": "invoice_002.tif", "content_type": "image/tiff", "size_bytes": 2097152 }
   ]
 }
 ```
@@ -73,8 +73,8 @@ Generate presigned S3 PUT URLs for one or more invoice files.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `files` | array | yes | 1–10 files per call |
-| `files[].name` | string | yes | Original filename, used in key construction |
-| `files[].content_type` | string | yes | Must be `application/pdf` |
+| `files[].name` | string | yes | Original filename, used in key construction. Demo-supported extensions: `.pdf`, `.tif`, `.tiff` |
+| `files[].content_type` | string | yes | Demo-supported values: `application/pdf`, `image/tiff`, `image/tif`, `application/octet-stream` |
 | `files[].size_bytes` | integer | yes | Must be ≤ 20971520 (20 MB) |
 
 **Response 200**
@@ -109,7 +109,7 @@ Generate presigned S3 PUT URLs for one or more invoice files.
 **Response 400 — unsupported file type**
 
 ```json
-{ "error": "unsupported_file_type", "message": "only application/pdf is accepted" }
+{ "error": "unsupported_file_type", "message": "only PDF and TIFF invoice files are accepted" }
 ```
 
 **Notes**

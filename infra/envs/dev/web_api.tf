@@ -1,9 +1,9 @@
 locals {
-  web_api_name            = "${local.name_prefix}-web-api"
-  upload_lambda_name      = "${local.name_prefix}-upload"
+  web_api_name               = "${local.name_prefix}-web-api"
+  upload_lambda_name         = "${local.name_prefix}-upload"
   invoice_status_lambda_name = "${local.name_prefix}-invoice-status"
   list_invoices_lambda_name  = "${local.name_prefix}-list-invoices"
-  status_prefix           = "status"
+  status_prefix              = "status"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -38,8 +38,8 @@ data "aws_iam_policy_document" "status_lambda_s3" {
   }
 
   statement {
-    sid     = "ListStatusPrefix"
-    actions = ["s3:ListBucket"]
+    sid       = "ListStatusPrefix"
+    actions   = ["s3:ListBucket"]
     resources = [module.data_lake_bucket.bucket_arn]
 
     condition {
@@ -132,8 +132,8 @@ module "invoice_status_lambda_role" {
   name             = "${local.name_prefix}-invoice-status-role"
   trusted_services = ["lambda.amazonaws.com"]
   inline_policies = {
-    logging    = data.aws_iam_policy_document.web_api_logging.json
-    s3_status  = data.aws_iam_policy_document.status_lambda_s3.json
+    logging   = data.aws_iam_policy_document.web_api_logging.json
+    s3_status = data.aws_iam_policy_document.status_lambda_s3.json
   }
   tags = local.common_tags
 }
@@ -181,8 +181,10 @@ module "upload_lambda" {
   memory_size      = var.lambda_memory_size
   log_group_name   = module.upload_lambda_log_group.name
   environment_variables = {
-    DATA_LAKE_BUCKET = module.data_lake_bucket.bucket_name
-    RAW_PREFIX       = local.raw_prefix
+    DATA_LAKE_BUCKET             = module.data_lake_bucket.bucket_name
+    RAW_PREFIX                   = local.raw_prefix
+    UPLOAD_ALLOWED_CONTENT_TYPES = "application/pdf,image/tiff,image/tif,application/octet-stream"
+    UPLOAD_ALLOWED_EXTENSIONS    = ".pdf,.tif,.tiff"
   }
   tags = local.common_tags
 }
@@ -244,6 +246,18 @@ resource "aws_apigatewayv2_api" "web_api" {
   tags = local.common_tags
 }
 
+resource "aws_s3_bucket_cors_configuration" "data_lake_uploads" {
+  bucket = module.data_lake_bucket.bucket_id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = var.web_api_cors_origins
+    expose_headers  = ["ETag"]
+    max_age_seconds = 300
+  }
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.web_api.id
   name        = "$default"
@@ -251,6 +265,17 @@ resource "aws_apigatewayv2_stage" "default" {
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.web_api_access.arn
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      ip               = "$context.identity.sourceIp"
+      requestTime      = "$context.requestTime"
+      httpMethod       = "$context.httpMethod"
+      routeKey         = "$context.routeKey"
+      status           = "$context.status"
+      protocol         = "$context.protocol"
+      responseLength   = "$context.responseLength"
+      integrationError = "$context.integrationErrorMessage"
+    })
   }
 
   tags = local.common_tags

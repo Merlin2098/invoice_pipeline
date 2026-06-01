@@ -737,6 +737,29 @@ STATUS_PREFIX = "status"
 _MAX_FILES_PER_UPLOAD = 10
 _MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 _PRESIGN_TTL_SECONDS = 300
+_DEFAULT_UPLOAD_ALLOWED_EXTENSIONS = ".pdf,.tif,.tiff"
+_DEFAULT_UPLOAD_ALLOWED_CONTENT_TYPES = (
+    "application/pdf,image/tiff,image/tif,application/octet-stream"
+)
+
+
+def _csv_env_set(name: str, default: str) -> set[str]:
+    return {
+        item.strip().lower()
+        for item in os.getenv(name, default).split(",")
+        if item.strip()
+    }
+
+
+def _allowed_upload_extensions() -> set[str]:
+    return _csv_env_set("UPLOAD_ALLOWED_EXTENSIONS", _DEFAULT_UPLOAD_ALLOWED_EXTENSIONS)
+
+
+def _allowed_upload_content_types() -> set[str]:
+    return _csv_env_set(
+        "UPLOAD_ALLOWED_CONTENT_TYPES",
+        _DEFAULT_UPLOAD_ALLOWED_CONTENT_TYPES,
+    )
 
 
 def _write_status(
@@ -788,13 +811,24 @@ def generate_upload_urls(event: dict[str, Any], _context: Any = None) -> dict[st
             "body": json.dumps({"error": "invalid_request", "message": f"Maximum {_MAX_FILES_PER_UPLOAD} files per request."}),
         }
 
+    allowed_extensions = _allowed_upload_extensions()
+    allowed_content_types = _allowed_upload_content_types()
+
     for file_entry in files:
-        content_type = str(file_entry.get("content_type") or "")
-        if content_type != "application/pdf":
+        file_name = str(file_entry.get("name") or "").strip()
+        extension = Path(file_name).suffix.lower()
+        content_type = str(file_entry.get("content_type") or "").strip().lower()
+        if not file_name or extension not in allowed_extensions:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "unsupported_file_type", "message": "only application/pdf is accepted."}),
+                "body": json.dumps({"error": "unsupported_file_type", "message": "only PDF and TIFF invoice files are accepted."}),
+            }
+        if content_type not in allowed_content_types:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "unsupported_file_type", "message": "unsupported content_type for invoice upload."}),
             }
         size_bytes = file_entry.get("size_bytes")
         if isinstance(size_bytes, (int, float)) and int(size_bytes) > _MAX_FILE_SIZE_BYTES:
@@ -817,6 +851,7 @@ def generate_upload_urls(event: dict[str, Any], _context: Any = None) -> dict[st
     uploads = []
     for file_entry in files:
         file_name = str(file_entry.get("name") or "")
+        content_type = str(file_entry.get("content_type") or "").strip().lower()
         invoice_id = Path(file_name).stem
         key = f"{raw_prefix}/run_id={run_id}/{file_name}"
         upload_url = s3_client.generate_presigned_url(
@@ -824,7 +859,7 @@ def generate_upload_urls(event: dict[str, Any], _context: Any = None) -> dict[st
             Params={
                 "Bucket": data_lake_bucket,
                 "Key": key,
-                "ContentType": "application/pdf",
+                "ContentType": content_type,
             },
             ExpiresIn=_PRESIGN_TTL_SECONDS,
         )
