@@ -76,20 +76,10 @@ S3 raw/ → SQS → Lambda raw-dispatch → Step Functions:
 
 ## Architecture Diagram
 
+![Invoice Pipeline Architecture](docs/resources/architecture_diagram.png)
+
 See [`docs/resources/diagram.md`](docs/resources/diagram.md) for Mermaid
 diagrams covering the full pipeline flow, AWS service topology, and layer detail.
-
-```text
-Browser → CloudFront + WAF
-               ├─ S3 Static Site (SPA)
-               └─ API Gateway v2
-                    ├─ POST /uploads → S3 raw/ → SQS → Step Functions:
-                    │       ValidateInput → ExtractOCR (Textract)
-                    │       → EnrichWithLLM (Bedrock) → PublishRunMetrics
-                    │       → ConsolidateGold → S3 gold/ → Glue → Athena
-                    ├─ GET  /invoices[/{id}/status] → S3 status/
-                    └─ POST /chat → Bedrock NL→SQL → Athena → Bedrock NL answer
-```
 
 ## Repository Structure
 
