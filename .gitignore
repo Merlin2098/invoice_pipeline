@@ -22,6 +22,9 @@ build/
 dist/
 spec/
 
+# Node / frontend
+node_modules/
+
 # =========================
 # Logs and runtime artifacts
 # =========================
