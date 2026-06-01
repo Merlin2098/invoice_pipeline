@@ -2,7 +2,7 @@ digraph invoice_pipeline_dev {
     graph [
         rankdir  = LR
         fontname = "Helvetica"
-        label    = "Invoice Pipeline - SQS-Decoupled AWS MVP Architecture (dev)"
+        label    = "Invoice Intelligence Pipeline - MVP Architecture (dev)"
         labelloc = t
         pad      = 0.5
         splines  = polyline
@@ -22,6 +22,59 @@ digraph invoice_pipeline_dev {
         fontsize = 9
         color    = "#555555"
     ]
+
+    // ── Web / User layer ─────────────────────────────────────────────────────
+
+    browser [
+        label     = "User Browser"
+        shape     = ellipse
+        fillcolor = "#e2d9f3"
+    ]
+
+    cloudfront [
+        label     = "Amazon CloudFront + WAF\nHTTPS · rate-limit"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    s3_site [
+        label     = "S3 Static Site Bucket\nReact + Vite SPA"
+        fillcolor = "#fff3cd"
+    ]
+
+    apigw [
+        label     = "API Gateway HTTP API v2\n/uploads · /invoices · /invoices/{id}/status · /chat"
+        fillcolor = "#cfe2ff"
+    ]
+
+    // ── Web API Lambdas ───────────────────────────────────────────────────────
+
+    lambda_upload [
+        label     = "Lambda\ngenerate-upload-urls\nPOST /uploads\npresigned S3 PUT"
+        fillcolor = "#d1e7dd"
+    ]
+
+    lambda_status [
+        label     = "Lambda\nget-invoice-status\nGET /invoices/{id}/status"
+        fillcolor = "#d1e7dd"
+    ]
+
+    lambda_list [
+        label     = "Lambda\nlist-invoices\nGET /invoices"
+        fillcolor = "#d1e7dd"
+    ]
+
+    lambda_chat [
+        label     = "Lambda\nchat\nPOST /chat\nNL→SQL→Athena→NL"
+        fillcolor = "#d1e7dd"
+    ]
+
+    s3_status [
+        label     = "S3 data lake\nstatus/\nper-document JSON"
+        fillcolor = "#fff3cd"
+    ]
+
+    // ── Ingestion pipeline ────────────────────────────────────────────────────
 
     s3_raw [
         label     = "S3 data lake\nraw/ or raw/run_id=<run_id>/"
@@ -49,6 +102,8 @@ digraph invoice_pipeline_dev {
         fillcolor = "#e2d9f3"
     ]
 
+    // ── Pipeline stage Lambdas ────────────────────────────────────────────────
+
     validate [
         label     = "Lambda\nvalidate-input\nValidateInput"
         fillcolor = "#d1e7dd"
@@ -70,9 +125,11 @@ digraph invoice_pipeline_dev {
     ]
 
     consolidate_gold [
-        label     = "Lambda\nconsolidate-gold\npost-batch finalizer\nwrites Parquet + external manifest"
+        label     = "Lambda\nconsolidate-gold\ninline Step Functions step (SPEC-016)\nParquet snapshot + manifest"
         fillcolor = "#d1e7dd"
     ]
+
+    // ── AWS managed services ──────────────────────────────────────────────────
 
     textract [
         label     = "Amazon Textract\nAnalyzeExpense"
@@ -80,17 +137,43 @@ digraph invoice_pipeline_dev {
         fillcolor = "#fde8d8"
     ]
 
-    bedrock [
-        label     = "Amazon Bedrock\noptional enrichment"
+    bedrock_enrich [
+        label     = "Amazon Bedrock\noptional field normalization\n(enrich-llm)"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    bedrock_sql [
+        label     = "Amazon Bedrock\nNL question → Athena SQL\n(Converse API)"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    bedrock_summarize [
+        label     = "Amazon Bedrock\nAthena rows → NL answer\n(result summarization)"
         shape     = ellipse
         fillcolor = "#fde8d8"
     ]
 
     cloudwatch [
-        label     = "CloudWatch\nLogs + Metrics"
+        label     = "CloudWatch\nLogs + Metrics + Alarms"
         shape     = ellipse
         fillcolor = "#fde8d8"
     ]
+
+    glue_catalog [
+        label     = "AWS Glue Data Catalog\ndatabase: invoice_pipeline_gold\ntable: gold_documents\npartitioned by batch_id"
+        shape     = cylinder
+        fillcolor = "#fde8d8"
+    ]
+
+    athena_workgroup [
+        label     = "Amazon Athena\nworkgroup: invoice-pipeline-dev\nscan limit 100 MB/query"
+        shape     = ellipse
+        fillcolor = "#fde8d8"
+    ]
+
+    // ── S3 data lake prefixes ─────────────────────────────────────────────────
 
     s3_bronze [
         label     = "S3 data lake\nbronze/textract-json/"
@@ -122,56 +205,66 @@ digraph invoice_pipeline_dev {
         fillcolor = "#fff3cd"
     ]
 
-    glue_catalog [
-        label     = "AWS Glue Data Catalog\ndatabase: invoice_pipeline_gold\ntable: gold_documents\npartitioned by batch_id"
-        shape     = cylinder
-        fillcolor = "#fde8d8"
-    ]
+    // ── Edges: web / user layer ───────────────────────────────────────────────
 
-    athena_workgroup [
-        label     = "Amazon Athena\nworkgroup: invoice-pipeline-dev\nscan limit 100 MB/query"
-        shape     = ellipse
-        fillcolor = "#fde8d8"
-    ]
+    browser      -> cloudfront    [label="HTTPS"]
+    cloudfront   -> s3_site       [label="SPA assets\nOAC"]
+    cloudfront   -> apigw         [label="API requests"]
+    apigw        -> lambda_upload [label="POST /uploads"]
+    apigw        -> lambda_status [label="GET /invoices/{id}/status"]
+    apigw        -> lambda_list   [label="GET /invoices"]
+    apigw        -> lambda_chat   [label="POST /chat"]
 
-    bedrock_sql [
-        label     = "Amazon Bedrock\nNL question -> Athena SQL\n(Converse API)"
-        shape     = ellipse
-        fillcolor = "#fde8d8"
-    ]
+    lambda_upload -> s3_raw       [label="presigned PUT URL\nbrowser uploads directly"]
+    lambda_upload -> s3_status    [label="write Uploaded status"]
+    lambda_status -> s3_status    [label="read status"]
+    lambda_list   -> s3_status    [label="list status objects"]
 
-    analytics_cli [
-        label     = "src/analytics CLI\nrepair-partitions | sql | ask\nSQL validator (SELECT-only)"
-        fillcolor = "#d1e7dd"
-    ]
+    // ── Edges: ingestion pipeline ─────────────────────────────────────────────
 
-    s3_raw          -> sqs_raw         [label="s3:ObjectCreated:*\nfilter: raw/ prefix"]
-    sqs_raw         -> sqs_dlq         [label="after 3 receive failures\nredrive_policy" style=dashed color="#dc3545"]
-    sqs_raw         -> raw_dispatch    [label="lambda event source mapping\nbatch_size=1 | max_concurrency=5\nReportBatchItemFailures"]
-    raw_dispatch    -> sfn             [label="StartExecution\nexecution_name={run_id}-{stem}-{idx}"]
-    sfn             -> validate        [label="ValidateInput"]
-    validate        -> extract_ocr     [label="InputValid?"]
-    extract_ocr     -> textract        [label="AnalyzeExpense"]
-    extract_ocr     -> s3_bronze       [label="PutObject\ntechnical evidence"]
-    extract_ocr     -> publish_metrics [label="skipped or failed" style=dashed]
-    extract_ocr     -> enrich_llm      [label="candidate + bronze_s3_key"]
-    enrich_llm      -> bedrock         [label="InvokeModel\nwhen BEDROCK_MODEL_ID is set"]
-    enrich_llm      -> s3_silver       [label="accepted or rejected document"]
-    enrich_llm      -> s3_errors       [label="technical failure document"]
-    enrich_llm      -> publish_metrics [label="processing result"]
-    publish_metrics -> cloudwatch      [label="PutMetricData\nlogs by stage"]
-    s3_silver       -> consolidate_gold [label="valid/rejected terminal outputs"]
-    s3_errors       -> consolidate_gold [label="failed terminal outputs"]
-    consolidate_gold -> s3_gold        [label="only when batch complete\nvalid rows only"]
-    consolidate_gold -> s3_gold_manifests [label="batch manifest\nkept out of Parquet partitions"]
-    consolidate_gold -> cloudwatch     [label="logs"]
+    s3_raw       -> sqs_raw       [label="s3:ObjectCreated:*\nfilter: raw/ prefix"]
+    sqs_raw      -> sqs_dlq       [label="after 3 receive failures\nredrive_policy" style=dashed color="#dc3545"]
+    sqs_raw      -> raw_dispatch  [label="lambda event source mapping\nbatch_size=1 | max_concurrency=5\nReportBatchItemFailures"]
+    raw_dispatch -> sfn           [label="StartExecution\nexecution_name={run_id}-{stem}-{idx}"]
+    raw_dispatch -> s3_status     [label="write Processing status"]
 
-    s3_gold          -> glue_catalog     [label="MSCK REPAIR TABLE\nregisters batch_id partitions"]
-    analytics_cli    -> bedrock_sql      [label="ask <question>\nschema + system prompt"]
-    bedrock_sql      -> analytics_cli    [label="generated SQL"]
-    analytics_cli    -> athena_workgroup [label="StartQueryExecution\nvalidated SELECT + LIMIT"]
-    athena_workgroup -> glue_catalog     [label="reads table metadata"]
-    athena_workgroup -> s3_gold          [label="scans Parquet partitions"]
-    athena_workgroup -> s3_athena_results [label="writes query results"]
-    athena_workgroup -> cloudwatch       [label="workgroup metrics"]
+    sfn          -> validate      [label="ValidateInput"]
+    validate     -> extract_ocr   [label="InputValid?"]
+    extract_ocr  -> textract      [label="AnalyzeExpense"]
+    extract_ocr  -> s3_bronze     [label="PutObject\ntechnical evidence"]
+    extract_ocr  -> publish_metrics [label="skipped or failed" style=dashed]
+    extract_ocr  -> enrich_llm    [label="candidate + bronze_s3_key"]
+
+    enrich_llm   -> bedrock_enrich  [label="InvokeModel\nwhen BEDROCK_MODEL_ID set"]
+    enrich_llm   -> s3_silver       [label="accepted or rejected document"]
+    enrich_llm   -> s3_errors       [label="technical failure document"]
+    enrich_llm   -> publish_metrics [label="processing result"]
+    enrich_llm   -> s3_status       [label="write Consolidating status"]
+
+    publish_metrics -> cloudwatch   [label="PutMetricData\nlogs by stage"]
+
+    // ── Edges: Gold consolidation (inline Step Functions step) ────────────────
+
+    sfn              -> consolidate_gold   [label="ConsolidateGold\n(SPEC-016 inline step)"]
+    s3_silver        -> consolidate_gold   [label="valid/rejected terminal outputs"]
+    s3_errors        -> consolidate_gold   [label="failed terminal outputs"]
+    consolidate_gold -> s3_gold            [label="valid rows only\nParquet snapshot"]
+    consolidate_gold -> s3_gold_manifests  [label="batch manifest\nkept out of Parquet partitions"]
+    consolidate_gold -> s3_status          [label="write Completed | Failed status"]
+    consolidate_gold -> cloudwatch         [label="logs"]
+
+    // ── Edges: Analytics layer ────────────────────────────────────────────────
+
+    s3_gold          -> glue_catalog       [label="MSCK REPAIR TABLE\nregisters batch_id partitions"]
+
+    lambda_chat      -> bedrock_sql        [label="user question\nschema + system prompt"]
+    bedrock_sql      -> lambda_chat        [label="generated SQL"]
+    lambda_chat      -> athena_workgroup   [label="StartQueryExecution\nvalidated SELECT + LIMIT"]
+    athena_workgroup -> glue_catalog       [label="reads table metadata"]
+    athena_workgroup -> s3_gold            [label="scans Parquet partitions"]
+    athena_workgroup -> s3_athena_results  [label="writes query results"]
+    athena_workgroup -> lambda_chat        [label="result rows"]
+    lambda_chat      -> bedrock_summarize  [label="rows + question"]
+    bedrock_summarize -> lambda_chat       [label="NL answer"]
+    athena_workgroup -> cloudwatch         [label="workgroup metrics"]
 }

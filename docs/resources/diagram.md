@@ -153,4 +153,4 @@ The invoice pipeline architecture combines:
 - analytical consumption with `Glue Catalog + Athena + Bedrock NL → SQL + NL result summarization`
 - security and observability with `IAM + CloudWatch Alarms + AWS Budgets + WAF rate-limiting`
 
-The diagram represents the target architecture implemented in code and IaC across Phases 0–5. MVP2 acceptance criteria (open portal → upload PDF → pipeline runs → NL query → NL answer) are fully covered.
+The diagram represents the current deployed architecture across Phases 0–5. The MVP is complete: open portal → upload PDF → pipeline runs → NL query → NL answer is validated end to end on AWS.

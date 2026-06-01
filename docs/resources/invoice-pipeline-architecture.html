@@ -9,7 +9,7 @@
     font-family: 'Segoe UI', Arial, sans-serif;
     color: #e0e0e0;
     padding: 24px;
-    min-width: 1200px;
+    min-width: 1400px;
   }
 
   .title {
@@ -70,17 +70,19 @@
     text-align: center;
   }
 
-  .lane-ingest    { background: rgba(59,130,246,0.07); border: 1.5px solid rgba(59,130,246,0.28); width: 172px; }
-  .lane-ingest    .lane-label { color: #60a5fa; }
-  .lane-sfn       { background: rgba(168,85,247,0.07); border: 1.5px solid rgba(168,85,247,0.28); width: 155px; }
-  .lane-sfn       .lane-label { color: #c084fc; }
-  .lane-pipeline  { background: rgba(34,197,94,0.07); border: 1.5px solid rgba(34,197,94,0.28); width: 175px; }
-  .lane-pipeline  .lane-label { color: #4ade80; }
-  .lane-aws       { background: rgba(251,146,60,0.07); border: 1.5px solid rgba(251,146,60,0.28); width: 160px; }
-  .lane-aws       .lane-label { color: #fb923c; }
-  .lane-storage   { background: rgba(234,179,8,0.07); border: 1.5px solid rgba(234,179,8,0.28); width: 172px; }
-  .lane-storage   .lane-label { color: #facc15; }
-  .lane-analytics { background: rgba(236,72,153,0.07); border: 1.5px solid rgba(236,72,153,0.28); width: 175px; }
+  .lane-web      { background: rgba(99,102,241,0.07); border: 1.5px solid rgba(99,102,241,0.28); width: 172px; }
+  .lane-web      .lane-label { color: #a5b4fc; }
+  .lane-ingest   { background: rgba(59,130,246,0.07); border: 1.5px solid rgba(59,130,246,0.28); width: 172px; }
+  .lane-ingest   .lane-label { color: #60a5fa; }
+  .lane-sfn      { background: rgba(168,85,247,0.07); border: 1.5px solid rgba(168,85,247,0.28); width: 155px; }
+  .lane-sfn      .lane-label { color: #c084fc; }
+  .lane-pipeline { background: rgba(34,197,94,0.07); border: 1.5px solid rgba(34,197,94,0.28); width: 175px; }
+  .lane-pipeline .lane-label { color: #4ade80; }
+  .lane-aws      { background: rgba(251,146,60,0.07); border: 1.5px solid rgba(251,146,60,0.28); width: 162px; }
+  .lane-aws      .lane-label { color: #fb923c; }
+  .lane-storage  { background: rgba(234,179,8,0.07); border: 1.5px solid rgba(234,179,8,0.28); width: 172px; }
+  .lane-storage  .lane-label { color: #facc15; }
+  .lane-analytics{ background: rgba(236,72,153,0.07); border: 1.5px solid rgba(236,72,153,0.28); width: 175px; }
   .lane-analytics .lane-label { color: #f472b6; }
 
   .node {
@@ -100,6 +102,12 @@
     border-radius: 4px; margin-top: 4px; font-weight: 600;
   }
 
+  .n-browser  { background: #0d0d1e; border-color: #3730a3; color: #c7d2fe; }
+  .n-browser  .node-title { color: #a5b4fc; }
+  .n-cf       { background: #1a0d08; border-color: #9a3412; color: #fed7aa; }
+  .n-cf       .node-title { color: #fb923c; }
+  .n-apigw    { background: #0d1a2e; border-color: #1e3a8a; color: #bfdbfe; }
+  .n-apigw    .node-title { color: #60a5fa; }
   .n-s3       { background: #1e1a08; border-color: #854d0e; color: #fde68a; }
   .n-s3       .node-title { color: #fbbf24; }
   .n-sqs      { background: #0d1a2e; border-color: #1e40af; color: #bfdbfe; }
@@ -120,14 +128,13 @@
   .n-glue     .node-title { color: #fb7185; }
   .n-athena   { background: #080d1e; border-color: #3730a3; color: #c7d2fe; }
   .n-athena   .node-title { color: #818cf8; }
-  .n-cli      { background: #0a1a0a; border-color: #14532d; color: #bbf7d0; }
-  .n-cli      .node-title { color: #86efac; }
 
   .badge-s3     { background: #854d0e; color: #fef08a; }
   .badge-sqs    { background: #1e40af; color: #bfdbfe; }
   .badge-lambda { background: #166534; color: #bbf7d0; }
   .badge-sfn    { background: #581c87; color: #e9d5ff; }
   .badge-ext    { background: #7c2d12; color: #fed7aa; }
+  .badge-web    { background: #3730a3; color: #c7d2fe; }
 
   /* Flows section */
   .flows-section {
@@ -151,24 +158,83 @@
   .flow-lbl  { color: #6b7280; font-style: italic; }
   .flow-dashed { border-style: dashed; border-color: #7f1d1d; }
   .flow-dashed .flow-arr { color: #991b1b; }
+
+  .flow-group-label {
+    width: 100%; text-align: left;
+    font-size: 8.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: #374151; margin-top: 8px; margin-bottom: 2px;
+    padding-left: 4px;
+  }
 </style>
 </head>
 <body>
 
-  <div class="title">Invoice Pipeline — SQS-Decoupled AWS MVP Architecture</div>
-  <div class="subtitle">dev environment &nbsp;·&nbsp; event-driven &nbsp;·&nbsp; serverless</div>
+  <div class="title">Invoice Intelligence Pipeline — MVP Architecture</div>
+  <div class="subtitle">dev environment &nbsp;·&nbsp; event-driven &nbsp;·&nbsp; serverless &nbsp;·&nbsp; end-to-end validated</div>
   <div class="region-badge">🌎 Region: us-east-1 (N. Virginia)</div>
 
   <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3730a3"></div>Web / User</div>
     <div class="legend-item"><div class="legend-dot" style="background:#854d0e"></div>S3 Storage</div>
     <div class="legend-item"><div class="legend-dot" style="background:#1e40af"></div>SQS Queue</div>
     <div class="legend-item"><div class="legend-dot" style="background:#166534"></div>Lambda Function</div>
     <div class="legend-item"><div class="legend-dot" style="background:#581c87"></div>Step Functions</div>
     <div class="legend-item"><div class="legend-dot" style="background:#7c2d12"></div>AWS Managed Services</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#3730a3"></div>Analytics Layer</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#86198f"></div>Amazon Bedrock</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9f1239"></div>Analytics Layer</div>
   </div>
 
   <div class="lane-container">
+
+    <!-- WEB / USER LAYER -->
+    <div class="lane lane-web">
+      <div class="lane-label">🌐 Web Portal</div>
+      <div class="node n-browser">
+        <div class="node-title">👤 User Browser</div>
+        <div class="node-sub">React + Vite SPA<br>Upload · History · Chat</div>
+        <span class="node-badge badge-web">Browser</span>
+      </div>
+      <div class="node n-cf">
+        <div class="node-title">☁️ CloudFront + WAF</div>
+        <div class="node-sub">HTTPS · rate-limit<br>OAC → S3 static site</div>
+        <span class="node-badge badge-ext">CDN</span>
+      </div>
+      <div class="node n-s3">
+        <div class="node-title">🪣 S3 Static Site</div>
+        <div class="node-sub">React + Vite SPA<br>dist/ assets</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+      <div class="node n-apigw">
+        <div class="node-title">🔗 API Gateway v2</div>
+        <div class="node-sub">POST /uploads<br>GET /invoices<br>GET /invoices/{id}/status<br>POST /chat</div>
+        <span class="node-badge badge-sqs">HTTP API</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ generate-upload-urls</div>
+        <div class="node-sub">POST /uploads<br>presigned S3 PUT<br>write Uploaded status</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ get-invoice-status</div>
+        <div class="node-sub">GET /invoices/{id}/status<br>lee status/</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ list-invoices</div>
+        <div class="node-sub">GET /invoices<br>lista status/</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-lambda">
+        <div class="node-title">λ chat</div>
+        <div class="node-sub">POST /chat<br>NL→SQL→Athena→NL</div>
+        <span class="node-badge badge-lambda">Lambda</span>
+      </div>
+      <div class="node n-s3">
+        <div class="node-title">📋 S3 Status</div>
+        <div class="node-sub">status/<br>per-document JSON<br>Uploaded→Completed</div>
+        <span class="node-badge badge-s3">S3</span>
+      </div>
+    </div>
 
     <!-- INGESTA -->
     <div class="lane lane-ingest">
@@ -190,7 +256,7 @@
       </div>
       <div class="node n-lambda">
         <div class="node-title">λ raw-dispatch</div>
-        <div class="node-sub">start_raw_ingestion<br>auto run_id si ausente</div>
+        <div class="node-sub">start_raw_ingestion<br>auto run_id si ausente<br>write Processing status</div>
         <span class="node-badge badge-lambda">Lambda</span>
       </div>
     </div>
@@ -200,7 +266,7 @@
       <div class="lane-label">🔷 Orquestación</div>
       <div class="node n-sfn">
         <div class="node-title">⬡ Step Functions</div>
-        <div class="node-sub">document-pipeline<br><br>execution_name=<br>{run_id}-{stem}-{idx}</div>
+        <div class="node-sub">document-pipeline<br><br>ValidateInput<br>ExtractOCR<br>EnrichWithLLM<br>PublishRunMetrics<br>ConsolidateGold</div>
         <span class="node-badge badge-sfn">SFN</span>
       </div>
     </div>
@@ -220,7 +286,7 @@
       </div>
       <div class="node n-lambda">
         <div class="node-title">λ enrich-llm</div>
-        <div class="node-sub">Bedrock normalization<br>silver / error write</div>
+        <div class="node-sub">Bedrock normalization<br>silver / error write<br>write Consolidating status</div>
         <span class="node-badge badge-lambda">Lambda</span>
       </div>
       <div class="node n-lambda">
@@ -230,7 +296,7 @@
       </div>
       <div class="node n-lambda">
         <div class="node-title">λ consolidate-gold</div>
-        <div class="node-sub">post-batch finalizer<br>Parquet + manifest</div>
+        <div class="node-sub">paso inline SFN<br>(SPEC-016)<br>Parquet + manifest<br>write Completed | Failed</div>
         <span class="node-badge badge-lambda">Lambda</span>
       </div>
     </div>
@@ -244,13 +310,23 @@
         <span class="node-badge badge-ext">AI/ML</span>
       </div>
       <div class="node n-bedrock">
-        <div class="node-title">🧠 Bedrock</div>
-        <div class="node-sub">InvokeModel<br>optional enrichment<br>Converse API</div>
+        <div class="node-title">🧠 Bedrock (enrich)</div>
+        <div class="node-sub">InvokeModel<br>field normalization<br>opcional</div>
+        <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
+      </div>
+      <div class="node n-bedrock">
+        <div class="node-title">🧠 Bedrock (SQL)</div>
+        <div class="node-sub">NL → Athena SQL<br>Converse API<br>schema + prompt</div>
+        <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
+      </div>
+      <div class="node n-bedrock">
+        <div class="node-title">🧠 Bedrock (summary)</div>
+        <div class="node-sub">rows → NL answer<br>result summarization</div>
         <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
       </div>
       <div class="node n-cw">
         <div class="node-title">📊 CloudWatch</div>
-        <div class="node-sub">Logs + Metrics<br>PutMetricData<br>workgroup metrics</div>
+        <div class="node-sub">Logs + Metrics<br>+ Alarms<br>PutMetricData</div>
         <span class="node-badge" style="background:#155e75;color:#a5f3fc;">OBS</span>
       </div>
     </div>
@@ -303,16 +379,6 @@
         <div class="node-sub">wg: invoice-pipeline-dev<br>scan limit: 100 MB/q<br>StartQueryExecution</div>
         <span class="node-badge" style="background:#3730a3;color:#c7d2fe;">Athena</span>
       </div>
-      <div class="node n-bedrock">
-        <div class="node-title">🧠 Bedrock SQL</div>
-        <div class="node-sub">NL → Athena SQL<br>Converse API<br>schema + system prompt</div>
-        <span class="node-badge" style="background:#86198f;color:#f5d0fe;">GenAI</span>
-      </div>
-      <div class="node n-cli">
-        <div class="node-title">💻 Analytics CLI</div>
-        <div class="node-sub">repair-partitions<br>sql · ask<br>SELECT-only validator</div>
-        <span class="node-badge" style="background:#14532d;color:#bbf7d0;">CLI</span>
-      </div>
     </div>
 
   </div>
@@ -321,20 +387,39 @@
   <div class="flows-section">
     <div class="flows-title">→ Flujos de Datos</div>
     <div class="flow-list">
+
+      <div class="flow-group-label" style="width:100%">Web / Upload</div>
+      <div class="flow-item"><span class="flow-src">Browser</span><span class="flow-arr">→</span><span class="flow-dst">CloudFront + WAF</span><span class="flow-lbl">HTTPS</span></div>
+      <div class="flow-item"><span class="flow-src">CloudFront</span><span class="flow-arr">→</span><span class="flow-dst">S3 Static Site</span><span class="flow-lbl">SPA assets · OAC</span></div>
+      <div class="flow-item"><span class="flow-src">CloudFront</span><span class="flow-arr">→</span><span class="flow-dst">API Gateway v2</span><span class="flow-lbl">API requests</span></div>
+      <div class="flow-item"><span class="flow-src">POST /uploads</span><span class="flow-arr">→</span><span class="flow-dst">λ generate-upload-urls</span><span class="flow-lbl">presigned S3 PUT · write Uploaded</span></div>
+      <div class="flow-item"><span class="flow-src">Browser</span><span class="flow-arr">→</span><span class="flow-dst">S3 Raw</span><span class="flow-lbl">PUT directo con presigned URL</span></div>
+      <div class="flow-item"><span class="flow-src">GET /invoices/{id}/status</span><span class="flow-arr">→</span><span class="flow-dst">λ get-invoice-status</span><span class="flow-lbl">lee status/</span></div>
+      <div class="flow-item"><span class="flow-src">GET /invoices</span><span class="flow-arr">→</span><span class="flow-dst">λ list-invoices</span><span class="flow-lbl">lista status/</span></div>
+
+      <div class="flow-group-label" style="width:100%">Ingesta y Orquestación</div>
       <div class="flow-item"><span class="flow-src">S3 Raw</span><span class="flow-arr">→</span><span class="flow-dst">SQS Queue</span><span class="flow-lbl">s3:ObjectCreated · raw/ prefix</span></div>
       <div class="flow-item flow-dashed"><span class="flow-src">SQS</span><span class="flow-arr">⇢</span><span class="flow-dst">DLQ</span><span class="flow-lbl">after 3 failures · redrive</span></div>
       <div class="flow-item"><span class="flow-src">SQS</span><span class="flow-arr">→</span><span class="flow-dst">λ raw-dispatch</span><span class="flow-lbl">event source mapping · batch=1</span></div>
-      <div class="flow-item"><span class="flow-src">λ raw-dispatch</span><span class="flow-arr">→</span><span class="flow-dst">Step Functions</span><span class="flow-lbl">StartExecution {run_id}-{stem}-{idx}</span></div>
-      <div class="flow-item"><span class="flow-src">SFN</span><span class="flow-arr">→</span><span class="flow-dst">validate → extract-ocr → enrich-llm</span></div>
+      <div class="flow-item"><span class="flow-src">λ raw-dispatch</span><span class="flow-arr">→</span><span class="flow-dst">Step Functions</span><span class="flow-lbl">StartExecution {run_id}-{stem}-{idx} · write Processing</span></div>
+
+      <div class="flow-group-label" style="width:100%">Pipeline Steps</div>
+      <div class="flow-item"><span class="flow-src">SFN</span><span class="flow-arr">→</span><span class="flow-dst">validate → extract-ocr → enrich-llm → publish-metrics → consolidate-gold</span></div>
       <div class="flow-item"><span class="flow-src">extract-ocr</span><span class="flow-arr">→</span><span class="flow-dst">Textract + S3 Bronze</span><span class="flow-lbl">AnalyzeExpense</span></div>
-      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock</span><span class="flow-lbl">InvokeModel (opcional)</span></div>
-      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Silver / Errors</span><span class="flow-lbl">valid · rejected · failed</span></div>
+      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock (enrich)</span><span class="flow-lbl">InvokeModel · opcional</span></div>
+      <div class="flow-item"><span class="flow-src">enrich-llm</span><span class="flow-arr">→</span><span class="flow-dst">Silver / Errors</span><span class="flow-lbl">valid · rejected · failed · write Consolidating</span></div>
       <div class="flow-item"><span class="flow-src">publish-metrics</span><span class="flow-arr">→</span><span class="flow-dst">CloudWatch</span><span class="flow-lbl">PutMetricData por stage</span></div>
-      <div class="flow-item"><span class="flow-src">Silver + Errors</span><span class="flow-arr">→</span><span class="flow-dst">consolidate-gold</span><span class="flow-lbl">terminal outputs</span></div>
-      <div class="flow-item"><span class="flow-src">consolidate-gold</span><span class="flow-arr">→</span><span class="flow-dst">Gold + Manifests</span><span class="flow-lbl">batch complete · Parquet</span></div>
-      <div class="flow-item"><span class="flow-src">S3 Gold</span><span class="flow-arr">→</span><span class="flow-dst">Glue Catalog</span><span class="flow-lbl">MSCK REPAIR TABLE · batch_id</span></div>
-      <div class="flow-item"><span class="flow-src">CLI ask</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock SQL → Athena</span><span class="flow-lbl">NL → SQL → results</span></div>
-      <div class="flow-item"><span class="flow-src">Athena</span><span class="flow-arr">→</span><span class="flow-dst">Glue + Gold + Results</span><span class="flow-lbl">scans Parquet partitions</span></div>
+      <div class="flow-item"><span class="flow-src">Silver + Errors</span><span class="flow-arr">→</span><span class="flow-dst">consolidate-gold</span><span class="flow-lbl">paso inline SFN (SPEC-016)</span></div>
+      <div class="flow-item"><span class="flow-src">consolidate-gold</span><span class="flow-arr">→</span><span class="flow-dst">Gold + Manifests</span><span class="flow-lbl">Parquet snapshot · write Completed | Failed</span></div>
+
+      <div class="flow-group-label" style="width:100%">Analytics (POST /chat)</div>
+      <div class="flow-item"><span class="flow-src">S3 Gold</span><span class="flow-arr">→</span><span class="flow-dst">Glue Catalog</span><span class="flow-lbl">MSCK REPAIR TABLE · batch_id partitions</span></div>
+      <div class="flow-item"><span class="flow-src">POST /chat</span><span class="flow-arr">→</span><span class="flow-dst">λ chat</span><span class="flow-lbl">NL question</span></div>
+      <div class="flow-item"><span class="flow-src">λ chat</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock (SQL)</span><span class="flow-lbl">schema + system prompt → generated SQL</span></div>
+      <div class="flow-item"><span class="flow-src">λ chat</span><span class="flow-arr">→</span><span class="flow-dst">Athena</span><span class="flow-lbl">StartQueryExecution · SELECT-only validated</span></div>
+      <div class="flow-item"><span class="flow-src">Athena</span><span class="flow-arr">→</span><span class="flow-dst">Glue Catalog + S3 Gold</span><span class="flow-lbl">reads metadata · scans Parquet</span></div>
+      <div class="flow-item"><span class="flow-src">λ chat</span><span class="flow-arr">→</span><span class="flow-dst">Bedrock (summary)</span><span class="flow-lbl">rows + question → NL answer</span></div>
+
     </div>
   </div>
 

@@ -219,25 +219,32 @@ partitions, and Athena queries to inspect results end to end.
 
 ## Current Status
 
-The cloud MVP has validated the business idea and the operational path:
+The MVP is complete end-to-end. The full cycle — web portal upload through
+conversational analytics — is deployed and validated on AWS:
 
-- S3 raw upload trigger.
-- SQS to Lambda dispatch.
-- Step Functions execution.
-- Textract-backed OCR stage.
-- Bedrock-ready enrichment boundary.
-- Bronze, Silver, Gold, and error routing.
-- `run_id` traceability.
-- CloudWatch logging and metrics.
-- Glue/Athena analytics over Gold outputs.
+- Serverless web portal (React + Vite) on S3 + CloudFront + WAF.
+- HTTP API (API Gateway v2) with `/uploads`, `/invoices`, `/invoices/{id}/status`,
+  and `/chat` endpoints.
+- Upload Lambda generating presigned S3 PUT URLs; browser uploads directly to S3.
+- Per-document status tracking in `status/` with transitions
+  `Uploaded → Processing → Consolidating → Completed | Failed`.
+- Step Functions pipeline: `ValidateInput → ExtractOCR → EnrichWithLLM →
+  PublishRunMetrics → ConsolidateGold` fully wired (SPEC-016).
+- Conversational analytics: `POST /chat` accepts a natural-language question,
+  generates and validates SQL via Bedrock, queries Athena, and returns a
+  Bedrock-summarized answer.
+- Bronze, Silver, Gold, and error routing with `run_id` traceability.
+- CloudWatch logs, custom metrics, and a $20/month AWS Budget guardrail.
 
 ## Roadmap
 
-- Polish public documentation and diagrams.
-- Publish representative architecture and execution evidence.
-- Harden alarms, retries, selective reprocessing, and cost monitoring.
-- Promote environment-specific settings for future non-dev deployments.
-- Keep Terraform plans small, explicit, and reviewable.
+- Harden CloudWatch alarms, Lambda retries, and DLQ alerting.
+- Selective reprocessing for failed or rejected documents.
+- `gold_invoice_summary` semantic view (SPEC-012) for richer NL→SQL grounding.
+- Remote Terraform backend migration with S3 state bucket and native locking
+  (SPEC-014 / SPEC-007).
+- Environment promotion beyond dev (staging, production stacks).
+- Optional: QuickSight or BI tool integration in direct-query mode over Athena.
 
 ## License
 

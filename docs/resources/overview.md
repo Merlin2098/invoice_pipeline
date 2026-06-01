@@ -362,21 +362,40 @@ Responsibilities:
 
 ## Implementation Status
 
-The real current status is:
+The MVP is fully deployed and validated end to end on AWS.
 
-- the local flow is implemented and validated for the bronze and silver stages
-- the AWS control plane based on S3, SQS, Lambda, and Step Functions is implemented in code and infrastructure
-- the AWS flow has been validated functionally for raw upload, SQS dispatch, Step Functions orchestration, Textract extraction, Bedrock enrichment, Silver routing, Gold consolidation, and `run_id` traceability
-- the shared runtime, Lambda bundle, and analytics layer are deployed through Terraform
-- Gold manifests are written outside the Athena table prefix so `gold_documents` partitions contain only Parquet files
-- the Athena + Bedrock natural-language analytics path has been validated end to end against a live Gold batch
+**Web layer:**
 
-In other words:
+- Serverless web portal (React + Vite SPA) hosted on S3, served via CloudFront
+  with WAF rate-limiting.
+- API Gateway HTTP v2 with four routes: `POST /uploads`, `GET /invoices`,
+  `GET /invoices/{id}/status`, `POST /chat`.
+- Upload Lambda generates presigned S3 PUT URLs; the browser uploads documents
+  directly to the data lake bucket.
+- Per-document status tracking written to `status/` by each pipeline stage.
 
-- `local`: validated for bronze, silver, and Gold regression behavior
-- `aws control plane`: exercised end to end
-- `aws extraction`: working for the reference smoke batch
-- `aws analytics`: validated with Glue partition repair, Athena SQL, and Bedrock NL -> SQL
+**Processing pipeline:**
+
+- Step Functions state machine runs the full sequence inline:
+  `ValidateInput → ExtractOCR → EnrichWithLLM → PublishRunMetrics → ConsolidateGold`
+  (SPEC-016 — Gold consolidation is wired into the state machine, not a manual step).
+- Bronze, Silver (valid and rejected), Gold, and Errors routing with `run_id`
+  and `document_id` traceability throughout.
+- CloudWatch logs and custom pipeline metrics for every Lambda and state transition.
+
+**Analytics layer:**
+
+- `POST /chat` Lambda accepts a natural-language question, generates SQL via
+  Bedrock, validates it (SELECT-only, table and column allowlists, LIMIT cap),
+  executes it against the Athena workgroup, and returns a Bedrock-summarized
+  natural-language answer plus the raw rows and SQL.
+- Glue partition repair is handled automatically so new `batch_id` partitions
+  are queryable immediately after Gold consolidation.
+
+**Local path:**
+
+- Local execution via `run_pipeline.py` exercises bronze and silver stages
+  without AWS dependencies, for regression testing of contracts and quality rules.
 
 ## Summary
 
@@ -397,13 +416,19 @@ This project implements a `config-driven` document pipeline with:
 
 ## Future Features
 
-Potential future analytics integrations include:
+Post-MVP work tracked in the repository roadmap:
 
-- QuickSight in direct query mode over Athena
-- Power BI through the Athena driver
-- scheduled Athena queries publishing curated marts back to S3
-
-Those remain optional future features and are not part of the active runtime path today.
+- `gold_invoice_summary` semantic view (SPEC-012) with business-friendly column
+  names (`supplier_name`, `subtotal_amount`, `tax_amount`) for improved NL→SQL
+  accuracy.
+- Remote Terraform backend migration: S3 state bucket with versioning and native
+  locking (SPEC-014 / SPEC-007).
+- Hardened alarms, Lambda retries, and DLQ alerting for production readiness.
+- Selective reprocessing of failed or rejected documents.
+- Environment promotion: staging and production Terraform stacks beyond dev.
+- Optional BI integrations: QuickSight in direct-query mode over Athena, Power BI
+  through the Athena ODBC driver, or scheduled Athena queries publishing curated
+  marts back to S3.
 
 Note about pipeline limits:
 
