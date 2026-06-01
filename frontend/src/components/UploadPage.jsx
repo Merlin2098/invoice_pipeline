@@ -1,17 +1,17 @@
 import { useRef, useState } from 'react'
+import { AlertTriangle, FileText, Trash2, UploadCloud } from 'lucide-react'
 import { requestUploadUrls, uploadFileToS3 } from '../api/client.js'
 
 const MAX_SIZE_BYTES = 20 * 1024 * 1024
-const ACCEPTED_TYPES = ['application/pdf', 'image/tiff']
-const ACCEPTED_EXTS  = ['.pdf', '.tif', '.tiff']
+const ACCEPTED_EXTS = ['.pdf', '.tif', '.tiff']
 
 function fileKey(file) { return `${file.name}-${file.size}` }
 
 function StatusBadge({ status }) {
   const labels = {
     idle: 'Waiting',
-    uploading: 'Uploading…',
-    done: 'Uploaded',
+    uploading: 'Uploading',
+    done: 'Completed',
     error: 'Failed',
   }
   const cls = {
@@ -25,7 +25,7 @@ function StatusBadge({ status }) {
 
 export default function UploadPage() {
   const inputRef = useRef(null)
-  const [files, setFiles] = useState([])   // { file, status, progress, error }
+  const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
 
   function addFiles(newFiles) {
@@ -85,20 +85,32 @@ export default function UploadPage() {
   const pendingCount = files.filter(e => e.status === 'idle').length
 
   return (
-    <div>
-      <h2 className="page-title">Upload Invoices</h2>
+    <div className="page-shell">
+      <div className="page-heading">
+        <div>
+          <h1 className="page-title">Upload Invoices</h1>
+          <p className="page-description">Send source documents into the AWS intake bucket for OCR and routing.</p>
+        </div>
+      </div>
 
       <div className="card">
-        {/* Drop zone */}
         <div
+          role="button"
+          tabIndex={0}
           className="dropzone"
           onDrop={onDrop}
           onDragOver={e => e.preventDefault()}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              inputRef.current?.click()
+            }
+          }}
           onClick={() => inputRef.current?.click()}
         >
-          <span className="dropzone-icon">📄</span>
-          <p className="dropzone-text">Drag & drop PDF / TIF files here, or <strong>click to browse</strong></p>
-          <p className="dropzone-hint">Max 20 MB per file</p>
+          <span className="dropzone-icon"><UploadCloud size={24} /></span>
+          <span className="dropzone-text">Drag and drop PDF or TIFF files here, or click to browse</span>
+          <span className="dropzone-hint">Max 20 MB per file</span>
           <input
             ref={inputRef}
             type="file"
@@ -109,31 +121,33 @@ export default function UploadPage() {
           />
         </div>
 
-        {/* File list */}
         {files.length > 0 && (
           <ul className="file-list">
             {files.map(entry => (
               <li key={fileKey(entry.file)} className="file-row">
-                <span className="file-name">{entry.file.name}</span>
+                <span className="file-name-wrap">
+                  <FileText size={17} />
+                  <span className="file-name">{entry.file.name}</span>
+                </span>
                 <span className="file-size">{(entry.file.size / 1024).toFixed(0)} KB</span>
 
-                {entry.status === 'uploading' && (
-                  <div className="progress-bar-wrap">
-                    <div className="progress-bar" style={{ width: `${entry.progress}%` }} />
-                    <span className="progress-label">{entry.progress}%</span>
-                  </div>
-                )}
+                <div className="progress-bar-wrap" aria-label={`Upload progress ${entry.progress}%`}>
+                  <div className="progress-bar" style={{ width: `${entry.progress}%` }} />
+                </div>
+                <span className="progress-label">{entry.progress}%</span>
 
                 <StatusBadge status={entry.status} />
 
-                {entry.error && <span className="file-error" title={entry.error}>⚠</span>}
+                {entry.error && <AlertTriangle className="file-error" size={17} aria-label={entry.error} />}
 
                 {entry.status !== 'uploading' && (
                   <button
-                    className="btn-remove"
+                    className="icon-button"
                     onClick={() => removeFile(fileKey(entry.file))}
-                    aria-label="Remove"
-                  >✕</button>
+                    aria-label={`Remove ${entry.file.name}`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 )}
               </li>
             ))}
@@ -142,11 +156,12 @@ export default function UploadPage() {
 
         <div className="upload-actions">
           <button
-            className="btn-primary"
+            className="btn-primary btn-with-icon"
             onClick={handleUpload}
             disabled={uploading || pendingCount === 0}
           >
-            {uploading ? 'Uploading…' : `Upload ${pendingCount > 0 ? `(${pendingCount})` : ''}`}
+            <UploadCloud size={17} />
+            {uploading ? 'Uploading' : `Upload${pendingCount > 0 ? ` (${pendingCount})` : ''}`}
           </button>
           {files.length > 0 && (
             <button
@@ -159,59 +174,6 @@ export default function UploadPage() {
           )}
         </div>
       </div>
-
-      <style>{`
-        .dropzone {
-          border: 2px dashed #d1d5db;
-          border-radius: 8px;
-          padding: 2.5rem 1.5rem;
-          text-align: center;
-          cursor: pointer;
-          transition: border-color 0.15s, background 0.15s;
-          margin-bottom: 1.25rem;
-        }
-        .dropzone:hover { border-color: #2563eb; background: #f0f7ff; }
-        .dropzone-icon { font-size: 2rem; display: block; margin-bottom: 0.5rem; }
-        .dropzone-text { font-size: 0.95rem; color: #374151; margin-bottom: 0.25rem; }
-        .dropzone-hint { font-size: 0.8rem; color: #9ca3af; }
-
-        .file-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
-        .file-row {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.6rem 0.75rem;
-          background: #f9fafb;
-          border-radius: 6px;
-          font-size: 0.875rem;
-          flex-wrap: wrap;
-        }
-        .file-name { flex: 1 1 180px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .file-size { color: #6b7280; white-space: nowrap; }
-        .file-error { color: #dc2626; font-size: 1.1rem; }
-
-        .progress-bar-wrap {
-          flex: 1 1 100px;
-          height: 6px;
-          background: #e5e7eb;
-          border-radius: 3px;
-          position: relative;
-          overflow: hidden;
-        }
-        .progress-bar { height: 100%; background: #2563eb; border-radius: 3px; transition: width 0.1s; }
-        .progress-label { position: absolute; right: 0; top: -14px; font-size: 0.7rem; color: #6b7280; }
-
-        .btn-remove {
-          background: none;
-          border: none;
-          color: #9ca3af;
-          font-size: 0.9rem;
-          padding: 0 0.25rem;
-        }
-        .btn-remove:hover { color: #dc2626; }
-
-        .upload-actions { display: flex; gap: 0.75rem; align-items: center; }
-      `}</style>
     </div>
   )
 }
