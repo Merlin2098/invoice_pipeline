@@ -127,7 +127,7 @@ resource "aws_cloudfront_distribution" "site" {
 
   # API Gateway origin for /uploads, /invoices, /chat
   origin {
-    domain_name = replace(replace(aws_apigatewayv2_stage.default.invoke_url, "https://", ""), "/${aws_apigatewayv2_stage.default.name}", "")
+    domain_name = trimsuffix(trimprefix(aws_apigatewayv2_stage.default.invoke_url, "https://"), "/")
     origin_id   = "WebAPI"
 
     custom_origin_config {
