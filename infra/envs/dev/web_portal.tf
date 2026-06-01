@@ -39,8 +39,8 @@ resource "aws_cloudfront_origin_access_control" "site" {
 
 data "aws_iam_policy_document" "site_bucket_policy" {
   statement {
-    sid     = "AllowCloudFrontServicePrincipal"
-    actions = ["s3:GetObject"]
+    sid       = "AllowCloudFrontServicePrincipal"
+    actions   = ["s3:GetObject"]
     resources = ["${module.site_bucket.bucket_arn}/*"]
 
     principals {
@@ -120,7 +120,7 @@ resource "aws_cloudfront_distribution" "site" {
   comment             = "${local.name_prefix} invoice portal"
 
   origin {
-    domain_name              = module.site_bucket.bucket_id != null ? "${module.site_bucket.bucket_id}.s3.${var.aws_region}.amazonaws.com" : ""
+    domain_name              = module.site_bucket.bucket_regional_domain_name
     origin_id                = "S3SiteBucket"
     origin_access_control_id = aws_cloudfront_origin_access_control.site.id
   }

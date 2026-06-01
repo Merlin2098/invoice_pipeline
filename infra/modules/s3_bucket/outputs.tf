@@ -12,3 +12,8 @@ output "bucket_name" {
   description = "S3 bucket name."
   value       = aws_s3_bucket.this.bucket
 }
+
+output "bucket_regional_domain_name" {
+  description = "Regional domain name for the S3 bucket (used by CloudFront OAC origins)."
+  value       = aws_s3_bucket.this.bucket_regional_domain_name
+}
