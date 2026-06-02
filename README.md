@@ -81,6 +81,18 @@ S3 raw/ → SQS → Lambda raw-dispatch → Step Functions:
 See [`docs/resources/diagram.md`](docs/resources/diagram.md) for Mermaid
 diagrams covering the full pipeline flow, AWS service topology, and layer detail.
 
+## Demo
+
+The following recordings show the data product running end-to-end on AWS.
+
+**Demo 1 — Invoice upload and pipeline processing**
+
+<video src="docs/video/invoice pipeline_demo.mp4" controls width="100%"></video>
+
+**Demo 2 — Conversational analytics (natural-language query via chat)**
+
+<video src="docs/video/invoice pipeline_demo2.mp4" controls width="100%"></video>
+
 ## Repository Structure
 
 ```text
