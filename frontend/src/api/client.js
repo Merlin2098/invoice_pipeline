@@ -1,5 +1,16 @@
 const BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+const CONTENT_TYPES_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
+}
+
+export function contentTypeForFile(file) {
+  const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+  return CONTENT_TYPES_BY_EXT[ext] ?? file.type ?? 'application/octet-stream'
+}
+
 async function request(method, path, body) {
   const opts = {
     method,
@@ -16,7 +27,7 @@ async function request(method, path, body) {
 
 export async function requestUploadUrls(files) {
   return request('POST', '/uploads', {
-    files: files.map(f => ({ name: f.name, content_type: f.type || 'application/pdf', size_bytes: f.size })),
+    files: files.map(f => ({ name: f.name, content_type: contentTypeForFile(f), size_bytes: f.size })),
   })
 }
 
@@ -24,7 +35,7 @@ export async function uploadFileToS3(uploadUrl, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', uploadUrl)
-    xhr.setRequestHeader('Content-Type', file.type || 'application/pdf')
+    xhr.setRequestHeader('Content-Type', contentTypeForFile(file))
     if (onProgress) xhr.upload.onprogress = e => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100))
     xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(`S3 PUT failed: ${xhr.status}`))
     xhr.onerror = () => reject(new Error('Network error during S3 upload'))

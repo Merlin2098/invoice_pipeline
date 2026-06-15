@@ -28,7 +28,10 @@
       "Bash(git check-ignore:*)",
       "Bash(aws s3api *)",
       "Bash(aws configure *)",
-      "Bash(rm \"scripts/windows/check_tfstate_bucket.ps1\")"
+      "Bash(rm \"scripts/windows/check_tfstate_bucket.ps1\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)[:500]\\)\")",
+      "Bash(terraform version *)"
     ],
     "deny": [
       "Bash(terraform apply:*)",

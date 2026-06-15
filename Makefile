@@ -2,10 +2,14 @@ ifeq ($(OS),Windows_NT)
 PYTHON ?= ./.venv/Scripts/python.exe
 UV ?= py -3 -m uv
 BOOTSTRAP_PYTHON ?= py -3
+NPM ?= npm.cmd
+SHELL := C:/Program Files/Git/usr/bin/bash.exe
+.SHELLFLAGS := -ec
 else
 PYTHON ?= ./.venv/bin/python
 UV ?= uv
 BOOTSTRAP_PYTHON ?= python3
+NPM ?= npm
 endif
 
 .PHONY: init uv-init uv-update uv-reset package package-chat treemap lint fmt clean ai-refresh \
@@ -62,10 +66,10 @@ tf-apply:
 	terraform -chdir=infra/envs/dev apply tfplan
 
 frontend-install:
-	cd frontend && npm install
+	cd frontend && $(NPM) install
 
 build-frontend:
-	cd frontend && npm run build
+	cd frontend && $(NPM) run build
 
 deploy-frontend:
 	@if [ -z "$(SITE_BUCKET)" ]; then \

@@ -29,6 +29,12 @@ older `infra/` root stack as a temporary transition baseline.
 4. Step Functions validates input, processes the document with Textract, writes
    bronze and silver outputs, and publishes metrics
 
+For the full end-to-end checklist (Lambda packaging, artifact upload order,
+and frontend deploy) see
+[docs/deployment_guide.md](../../../docs/deployment_guide.md). For safely
+tearing the environment down, see
+[docs/destruction_guide.md](../../../docs/destruction_guide.md).
+
 ## Suggested workflow
 
 ```powershell
