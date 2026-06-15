@@ -110,9 +110,9 @@ resource "aws_lambda_function" "prevalidation" {
 
   environment {
     variables = {
-      DATA_LAKE_BUCKET      = var.data_lake_bucket_name
-      CLOUDWATCH_NAMESPACE  = var.cloudwatch_namespace
-      BEDROCK_MODEL_ID      = var.bedrock_model_id
+      DATA_LAKE_BUCKET     = var.data_lake_bucket_name
+      CLOUDWATCH_NAMESPACE = var.cloudwatch_namespace
+      BEDROCK_MODEL_ID     = var.bedrock_model_id
     }
   }
 }
@@ -152,8 +152,8 @@ resource "aws_iam_role_policy" "glue_access" {
 }
 
 resource "aws_glue_job" "normalize" {
-  name     = "${var.name_prefix}-normalize"
-  role_arn = aws_iam_role.glue_execution.arn
+  name         = "${var.name_prefix}-normalize"
+  role_arn     = aws_iam_role.glue_execution.arn
   glue_version = "4.0"
   max_retries  = 1
   timeout      = 15
@@ -165,18 +165,18 @@ resource "aws_glue_job" "normalize" {
   }
 
   default_arguments = {
-    "--job-language"       = "python"
+    "--job-language"                     = "python"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--data_lake_bucket"   = var.data_lake_bucket_name
-    "--bedrock_model_id"   = var.bedrock_model_id
+    "--data_lake_bucket"                 = var.data_lake_bucket_name
+    "--bedrock_model_id"                 = var.bedrock_model_id
   }
 
   tags = var.tags
 }
 
 resource "aws_glue_job" "consolidate" {
-  name     = "${var.name_prefix}-consolidate"
-  role_arn = aws_iam_role.glue_execution.arn
+  name         = "${var.name_prefix}-consolidate"
+  role_arn     = aws_iam_role.glue_execution.arn
   glue_version = "4.0"
   max_retries  = 1
   timeout      = 15
